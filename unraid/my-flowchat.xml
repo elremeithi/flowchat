@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>flowchat</Name>
+  <Repository>flowchat:latest</Repository>
+  <Network>bridge</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <ExtraParams>--read-only --tmpfs /tmp --cap-drop=ALL --cap-add=CHOWN --cap-add=SETUID --cap-add=SETGID --security-opt=no-new-privileges</ExtraParams>
+  <Overview>Personal cross-device chat and file drop. Sign in from any browser to read, write and share files between your devices.</Overview>
+  <Category>Productivity: Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8080]/</WebUI>
+  <Config Name="Web port" Target="8080" Default="8080" Mode="tcp" Description="Port for the web interface" Type="Port" Display="always" Required="true" Mask="false">8080</Config>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/flowchat" Mode="rw" Description="Messages, sessions and uploaded files" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/flowchat</Config>
+  <Config Name="Password" Target="APP_PASSWORD" Default="" Mode="" Description="The password you sign in with. Use a long one if the app is reachable from the internet." Type="Variable" Display="always" Required="true" Mask="true"></Config>
+  <Config Name="Encryption key" Target="ENCRYPTION_KEY" Default="" Mode="" Description="Recommended. Encrypts messages and files on disk (16+ characters). Keep a copy somewhere safe: without it the data cannot be read. Do not change it later." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="Authenticator secret" Target="TOTP_SECRET" Default="" Mode="" Description="Recommended. Base32 secret for an authenticator app; sign-in then also asks for a 6-digit code. See the README for how to create one." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="Require HTTPS" Target="REQUIRE_HTTPS" Default="0" Mode="" Description="Set to 1 when the app runs behind an HTTPS reverse proxy. Plain HTTP requests are then refused." Type="Variable" Display="always" Required="false" Mask="false">0</Config>
+  <Config Name="Allowed hosts" Target="ALLOWED_HOSTS" Default="" Mode="" Description="Comma-separated addresses the app answers on, e.g. flow.example.com. Empty allows any." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Auto-delete after (days)" Target="RETENTION_DAYS" Default="0" Mode="" Description="Delete messages and files older than this many days. 0 keeps everything." Type="Variable" Display="advanced" Required="false" Mask="false">0</Config>
+  <Config Name="Outgoing webhook URL" Target="WEBHOOK_URL" Default="" Mode="" Description="Optional. Every new message is announced to this address (comma-separate several). Message text leaves the server, so only use services you trust." Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="Outgoing webhook secret" Target="WEBHOOK_SECRET" Default="" Mode="" Description="Optional. Signs outgoing webhooks (X-Flowchat-Signature header) so the receiver can check they are genuine." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="Outgoing webhook includes text" Target="WEBHOOK_INCLUDE_TEXT" Default="1" Mode="" Description="Set to 0 to announce only that a message arrived, without its text or file name." Type="Variable" Display="advanced" Required="false" Mask="false">1</Config>
+  <Config Name="Max upload (MB)" Target="MAX_UPLOAD_MB" Default="2048" Mode="" Description="Largest file that can be uploaded" Type="Variable" Display="always" Required="false" Mask="false">2048</Config>
+  <Config Name="Session length (days)" Target="SESSION_DAYS" Default="90" Mode="" Description="How long a device stays signed in without being used" Type="Variable" Display="advanced" Required="false" Mask="false">90</Config>
+  <Config Name="Trust proxy" Target="TRUST_PROXY" Default="0" Mode="" Description="Set to 1 when behind a reverse proxy, so login throttling uses the real client address" Type="Variable" Display="advanced" Required="false" Mask="false">0</Config>
+  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="" Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="" Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
+</Container>

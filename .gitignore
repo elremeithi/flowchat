@@ -1,0 +1,21 @@
+# Signing keys and passwords: never commit
+*.keystore
+*.jks
+*.keystore.pass
+keystore.properties
+*.idsig
+
+# Secrets and local settings
+.env
+.env.*
+!.env.example
+
+# Build output and downloads
+*.apk
+*.tar.gz
+android/build/
+android/lib/
+node_modules/
+
+# Runtime data
+data/

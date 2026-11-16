@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Flowchat</title>
+<meta name="theme-color" content="#1f5fd1">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<main id="login" class="login" hidden>
+  <form id="loginForm" class="login-card">
+    <img src="/icon.svg" alt="" width="48" height="48">
+    <h1>Flowchat</h1>
+    <p class="muted">Your notes, links and files on every device.</p>
+    <label for="password">Password</label>
+    <input id="password" type="password" autocomplete="current-password" required>
+    <label for="device">Name this device</label>
+    <input id="device" type="text" maxlength="40" autocomplete="off" required>
+    <label for="code" id="codeLabel" hidden>Authenticator code</label>
+    <input id="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" hidden>
+    <p id="loginError" class="error" role="alert" hidden></p>
+    <button type="submit" class="primary">Sign in</button>
+  </form>
+</main>
+
+<div id="app" class="app" hidden>
+  <header class="bar">
+    <img src="/icon.svg" alt="" width="26" height="26">
+    <div class="bar-title">
+      <strong>Flowchat</strong>
+      <span id="status" class="status">Connecting…</span>
+    </div>
+    <button id="devicesBtn" type="button" class="ghost">Settings</button>
+    <button id="logoutBtn" type="button" class="ghost">Sign out</button>
+  </header>
+
+  <div id="scroll" class="scroll">
+    <div class="column">
+      <button id="earlier" type="button" class="ghost earlier" hidden>Load earlier messages</button>
+      <div id="list" class="list"></div>
+      <div id="empty" class="empty" hidden>
+        <p><strong>Nothing here yet.</strong></p>
+        <p>Type a note, paste a link or drop a file. It shows up on every device you sign in on.</p>
+      </div>
+    </div>
+  </div>
+
+  <footer class="composer">
+    <div class="column">
+      <div id="uploads" class="uploads"></div>
+      <form id="sendForm" class="send">
+        <button id="attachBtn" type="button" class="icon-btn" title="Attach files" aria-label="Attach files">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5l-8.6 8.6a5.5 5.5 0 01-7.8-7.8l9-9a3.7 3.7 0 015.2 5.2l-9 9a1.8 1.8 0 01-2.6-2.6l8.3-8.3"/></svg>
+        </button>
+        <textarea id="text" rows="1" placeholder="Message or drop files" aria-label="Message"></textarea>
+        <button type="submit" class="primary send-btn">Send</button>
+      </form>
+      <input id="filePick" type="file" multiple hidden>
+    </div>
+  </footer>
+  <div id="drop" class="drop" hidden><span>Drop to send</span></div>
+</div>
+
+<dialog id="devicesDlg">
+  <h2>Signed-in devices</h2>
+  <ul id="deviceList" class="device-list"></ul>
+  <h2 class="dlg-h2">Incoming webhooks</h2>
+  <p class="muted small">A webhook is a secret address that other tools (scripts, Unraid, Home Assistant) can post messages to.</p>
+  <ul id="hookList" class="device-list"></ul>
+  <div class="hook-new">
+    <input id="hookName" type="text" maxlength="40" placeholder="Name, e.g. Unraid alerts" aria-label="Webhook name">
+    <button id="hookAdd" type="button" class="primary">Create</button>
+  </div>
+  <div id="hookResult" class="hook-result" hidden>
+    <p><strong>Copy this address now.</strong> It is not shown again.</p>
+    <textarea id="hookUrl" readonly rows="2" aria-label="Webhook address"></textarea>
+    <p class="muted small">Example:</p>
+    <pre id="hookExample"></pre>
+    <button id="hookCopy" type="button" class="ghost">Copy address</button>
+  </div>
+  <p id="hookOut" class="muted small" hidden></p>
+  <p id="hookError" class="error" role="alert" hidden></p>
+  <form method="dialog" class="dlg-row"><button id="appSettingsBtn" type="button" class="ghost" hidden>Phone app settings</button><button class="primary">Done</button></form>
+</dialog>
+
+<dialog id="confirmDlg">
+  <p id="confirmText"></p>
+  <form method="dialog" class="dlg-row">
+    <button value="no" class="ghost">Cancel</button>
+    <button value="yes" class="danger">Delete</button>
+  </form>
+</dialog>
+
+<script src="/app.js"></script>
+</body>
+</html>
