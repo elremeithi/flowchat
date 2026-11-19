@@ -98,6 +98,8 @@ redirect your messages elsewhere.
 
 ## Android app
 
+![Flowchat on a phone: sign in, chat, notes, a note, settings and dark mode](docs/app-preview.png)
+
 `android/Flowchat.apk` is a small companion app (Android 10 or newer):
 
 - **Chat** with your server's page, with the phone's file picker for attachments
