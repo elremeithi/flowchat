@@ -54,6 +54,8 @@ function showLogin() {
   if (events) { events.close(); events = null; }
   me = null;
   msgs = []; $('list').textContent = '';
+  notes = []; openId = null; dirty = false; clearTimeout(saveTimer);
+  $('noteList').textContent = ''; $('noteTitle').value = ''; $('noteBody').value = '';
   $('app').hidden = true;
   $('login').hidden = false;
   $('device').value = stored('flow_device') || guessDevice();
@@ -208,17 +210,19 @@ function renderAll() {
   $('earlier').hidden = !hasMore;
 }
 
-function confirmDelete(m) {
+function confirmAction(textContent, onYes) {
   const dlg = $('confirmDlg');
-  $('confirmText').textContent = m.file
-    ? `Delete "${m.file.name}" from every device? The file is removed from the server.`
-    : 'Delete this message from every device?';
-  dlg.onclose = async () => {
-    if (dlg.returnValue !== 'yes') return;
-    try { await api('DELETE', `/api/messages/${m.id}`); } catch (e) { if (e.message !== 'Already deleted') setStatus(e.message, 'down'); }
-  };
+  $('confirmText').textContent = textContent;
+  dlg.onclose = () => { if (dlg.returnValue === 'yes') onYes(); };
   dlg.returnValue = 'no';
   dlg.showModal();
+}
+function confirmDelete(m) {
+  confirmAction(m.file
+    ? `Delete "${m.file.name}" from every device? The file is removed from the server.`
+    : 'Delete this message from every device?', async () => {
+    try { await api('DELETE', `/api/messages/${m.id}`); } catch (e) { if (e.message !== 'Already deleted') setStatus(e.message, 'down'); }
+  });
 }
 
 // ---------- loading and live updates ----------
@@ -256,7 +260,7 @@ function connect() {
   events = new EventSource('/api/events');
   events.onopen = () => {
     setStatus(`Synced · ${me.device}`, 'live');
-    if (!first) loadLatest().catch(() => {});
+    if (!first) { loadLatest().catch(() => {}); loadNotes().catch(() => {}); }
     first = false;
   };
   events.onerror = async () => {
@@ -269,6 +273,7 @@ function connect() {
     if (msgs.some((x) => x.id === m.id)) return;
     const stick = nearBottom() || (m.device === me.device && !m.hook);
     msgs.push(m);
+    if (tab !== 'chat') $('chatDot').hidden = false;
     $('empty').hidden = true;
     const node = appendNode(m, true);
     if (stick) { node.dataset.stick = '1'; toBottom(); }
@@ -279,6 +284,8 @@ function connect() {
     msgs = msgs.filter((m) => m.id !== id);
     if (msgs.length !== before) { const top = scroller.scrollTop; renderAll(); scroller.scrollTop = top; }
   });
+  events.addEventListener('note', (e) => noteChanged(JSON.parse(e.data)));
+  events.addEventListener('noteDelete', (e) => noteRemoved(JSON.parse(e.data).id));
 }
 
 // ---------- sending ----------
@@ -371,14 +378,14 @@ text.addEventListener('paste', (e) => {
 });
 let dragDepth = 0;
 const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
-addEventListener('dragenter', (e) => { if (me && hasFiles(e)) { dragDepth++; $('drop').hidden = false; } });
+addEventListener('dragenter', (e) => { if (me && tab === 'chat' && hasFiles(e)) { dragDepth++; $('drop').hidden = false; } });
 addEventListener('dragleave', () => { if (dragDepth && --dragDepth === 0) $('drop').hidden = true; });
 addEventListener('dragover', (e) => { if (hasFiles(e)) e.preventDefault(); });
 addEventListener('drop', (e) => {
   if (!hasFiles(e)) return;
   e.preventDefault();
   dragDepth = 0; $('drop').hidden = true;
-  if (me) addFiles(e.dataTransfer.files);
+  if (me && tab === 'chat') addFiles(e.dataTransfer.files);
 });
 
 // ---------- devices ----------
@@ -451,6 +458,210 @@ $('hookCopy').addEventListener('click', async () => {
   setTimeout(() => { b.textContent = 'Copy address'; }, 1500);
 });
 
+// ---------- tabs ----------
+let tab = 'chat';
+function route() {
+  const h = location.hash.slice(1);
+  const noteMatch = /^note-([a-f0-9]{32})$/.exec(h);
+  const next = h === 'notes' || noteMatch ? 'notes' : 'chat';
+  if (tab === 'notes' && next !== 'notes') flushNote();
+  tab = next;
+  $('chatView').hidden = tab !== 'chat';
+  $('notesView').hidden = tab !== 'notes';
+  $('tabChat').setAttribute('aria-selected', tab === 'chat');
+  $('tabNotes').setAttribute('aria-selected', tab === 'notes');
+  if (tab === 'chat') {
+    $('chatDot').hidden = true;
+    if (nearBottom()) toBottom();
+  } else if (noteMatch) {
+    openNote(noteMatch[1]);
+  } else {
+    closeNote();
+  }
+}
+addEventListener('hashchange', route);
+
+// ---------- notes ----------
+let notes = [];       // newest first
+let openId = null;    // note in the editor
+let base = 0;         // server version the editor started from
+let dirty = false;    // editor has changes not yet saved
+let saving = false;
+let saveTimer = null;
+const noteTitle = $('noteTitle'), noteBody = $('noteBody');
+
+function noteLabel(n) {
+  const firstLine = (n.body || '').split('\n').find((l) => l.trim()) || '';
+  return { title: n.title || firstLine.trim().slice(0, 80) || 'Untitled', snip: n.title ? firstLine.trim().slice(0, 120) : '' };
+}
+function fmtWhen(ts) {
+  const d = new Date(ts);
+  return new Date().toDateString() === d.toDateString() ? fmtTime(ts)
+    : d.toLocaleDateString([], { day: 'numeric', month: 'short', year: d.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' });
+}
+function renderNoteList() {
+  const q = $('noteSearch').value.trim().toLowerCase();
+  const list = $('noteList');
+  list.textContent = '';
+  const shown = q ? notes.filter((n) => (n.title + '\n' + n.body).toLowerCase().includes(q)) : notes;
+  for (const n of shown) {
+    const { title, snip } = noteLabel(n);
+    const li = el('li');
+    const a = el('a', 'note-item');
+    a.href = `#note-${n.id}`;
+    if (n.id === openId) a.setAttribute('aria-current', 'true');
+    a.append(el('strong', null, title));
+    if (snip) a.append(el('span', 'snip', snip));
+    a.append(el('span', 'when', `${fmtWhen(n.updated)} · ${n.by}`));
+    li.append(a);
+    list.append(li);
+  }
+  $('notesEmpty').hidden = notes.length > 0;
+  $('notesNoMatch').hidden = !(notes.length && !shown.length);
+}
+$('noteSearch').addEventListener('input', renderNoteList);
+
+async function loadNotes() {
+  const data = await api('GET', '/api/notes');
+  notes = data.notes;
+  renderNoteList();
+  const n = openId && notes.find((x) => x.id === openId);
+  if (openId && !n) noteRemoved(openId);
+  else if (n && !dirty && !saving && n.updated !== base) fillEditor(n);
+}
+function noteState(text, bad) {
+  const s = $('noteState');
+  s.textContent = text;
+  s.classList.toggle('bad', !!bad);
+}
+function fillEditor(n) {
+  noteTitle.value = n.title;
+  noteBody.value = n.body;
+  base = n.updated;
+  dirty = false;
+  $('noteConflict').hidden = true;
+  noteState(`Saved ${fmtWhen(n.updated)} · ${n.by}`);
+}
+function openNote(id) {
+  if (id !== openId) flushNote();
+  const n = notes.find((x) => x.id === id);
+  if (!n) { if (notes.length || !me) location.replace('#notes'); return; }
+  if (id !== openId) { openId = id; fillEditor(n); }
+  $('noteEditor').hidden = false;
+  $('notePlaceholder').hidden = true;
+  $('notesView').classList.add('editing');
+  renderNoteList();
+}
+function closeNote() {
+  flushNote();
+  openId = null;
+  $('noteEditor').hidden = true;
+  $('notePlaceholder').hidden = false;
+  $('notesView').classList.remove('editing');
+  renderNoteList();
+}
+function scheduleSave() {
+  dirty = true;
+  noteState('Editing…');
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveNote, 700);
+}
+noteTitle.addEventListener('input', scheduleSave);
+noteBody.addEventListener('input', scheduleSave);
+noteTitle.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); noteBody.focus(); } });
+
+async function saveNote(force) {
+  clearTimeout(saveTimer);
+  if (!openId || !dirty) return;
+  if (saving) { saveTimer = setTimeout(saveNote, 300); return; }
+  const id = openId;
+  const body = { title: noteTitle.value, body: noteBody.value };
+  if (!force) body.base = base;
+  saving = true;
+  dirty = false;
+  noteState('Saving…');
+  try {
+    const n = await api('PUT', `/api/notes/${id}`, body);
+    upsertNote(n);
+    if (id === openId) {
+      base = n.updated;
+      $('noteConflict').hidden = true;
+      if (!dirty) noteState(`Saved ${fmtWhen(n.updated)}`);
+    }
+  } catch (e) {
+    if (id === openId) dirty = true;
+    if (e.message === 'Changed on another device') {
+      if (id === openId) { $('noteConflict').hidden = false; noteState('Not saved: changed on another device', true); }
+    } else if (e.message === 'This note was deleted on another device') {
+      noteRemoved(id);
+    } else if (id === openId) {
+      noteState(`Not saved: ${e.message}. Retrying…`, true);
+      saveTimer = setTimeout(saveNote, 5000);
+    }
+  } finally {
+    saving = false;
+  }
+}
+// Save straight away when leaving a note, switching tabs or hiding the page.
+function flushNote() { if (dirty && $('noteConflict').hidden) saveNote(); }
+addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushNote(); });
+addEventListener('beforeunload', (e) => { if (dirty) { flushNote(); e.preventDefault(); } });
+
+$('conflictMine').addEventListener('click', () => { dirty = true; saveNote(true); });
+$('conflictTheirs').addEventListener('click', () => {
+  const n = notes.find((x) => x.id === openId);
+  if (n) fillEditor(n);
+});
+
+function upsertNote(n) {
+  notes = notes.filter((x) => x.id !== n.id);
+  notes.unshift(n);
+  notes.sort((a, b) => b.updated - a.updated);
+  renderNoteList();
+}
+function noteChanged(n) {
+  const old = notes.find((x) => x.id === n.id);
+  if (old && old.updated >= n.updated) return;
+  upsertNote(n);
+  if (n.id !== openId || saving || n.updated === base) return;
+  if (dirty) { $('noteConflict').hidden = false; noteState('Changed on another device', true); }
+  else fillEditor(n);
+}
+function noteRemoved(id) {
+  notes = notes.filter((x) => x.id !== id);
+  if (id === openId) {
+    dirty = false;
+    clearTimeout(saveTimer);
+    openId = null;
+    if (tab === 'notes') location.replace('#notes');
+    setStatus('A note you had open was deleted on another device', 'down');
+    setTimeout(() => setStatus(`Synced · ${me ? me.device : ''}`, 'live'), 4000);
+  }
+  renderNoteList();
+}
+
+$('noteNew').addEventListener('click', async () => {
+  flushNote();
+  try {
+    const n = await api('POST', '/api/notes', { title: '', body: '' });
+    upsertNote(n);
+    location.hash = `#note-${n.id}`;
+    setTimeout(() => noteTitle.focus(), 0);
+  } catch (e) { noteState(e.message, true); }
+});
+$('noteDelete').addEventListener('click', () => {
+  const n = notes.find((x) => x.id === openId);
+  if (!n) return;
+  const label = noteLabel({ ...n, title: noteTitle.value, body: noteBody.value }).title;
+  confirmAction(`Delete the note "${label}" from every device?`, async () => {
+    const id = openId;
+    dirty = false;
+    clearTimeout(saveTimer);
+    try { await api('DELETE', `/api/notes/${id}`); noteRemoved(id); }
+    catch (e) { noteState(e.message, true); }
+  });
+});
+
 // ---------- boot ----------
 async function start() {
   try { me = await api('GET', '/api/me'); } catch { return; }
@@ -458,8 +669,9 @@ async function start() {
   $('app').hidden = false;
   text.value = stored('flow_draft') || '';
   autosize();
-  await loadLatest();
+  await Promise.all([loadLatest(), loadNotes()]);
   connect();
-  if (!matchMedia('(pointer: coarse)').matches) text.focus();
+  route();
+  if (tab === 'chat' && !matchMedia('(pointer: coarse)').matches) text.focus();
 }
 start();

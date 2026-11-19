@@ -51,6 +51,7 @@ if (!PASSWORD) {
   }
   console.log(`APP_PASSWORD is not set. A generated password is saved in ${pf}`);
 }
+const PASSWORD_GENERATED = !process.env.APP_PASSWORD;
 if (/^(change-?me|password|admin|flowchat|123456.*)$/i.test(PASSWORD)) {
   console.error('Refusing to start: APP_PASSWORD is a placeholder or a common password. Choose your own.');
   process.exit(1);
@@ -59,8 +60,6 @@ if (PASSWORD.length < 12) console.warn('Warning: APP_PASSWORD is shorter than 12
 const sha = (s) => crypto.createHash('sha256').update(s).digest();
 const PASS_HASH = sha(PASSWORD);
 const passwordOk = (p) => typeof p === 'string' && crypto.timingSafeEqual(sha(p), PASS_HASH);
-// Sessions are tied to the password: changing it signs every device out.
-const PASS_ID = sha('flowchat-session-binding:' + PASSWORD).toString('hex').slice(0, 16);
 
 // ---------- two-step sign-in (TOTP, RFC 6238) ----------
 let TOTP_KEY = null;
@@ -98,35 +97,110 @@ function totpOk(code) {
   return hit > 0;
 }
 
-// ---------- encryption at rest (optional) ----------
-// With ENCRYPTION_KEY set, message text, file names and file contents are
-// stored encrypted, so a copy of the data folder alone reveals nothing.
-let MASTER = null;
-if (process.env.ENCRYPTION_KEY) {
-  if (process.env.ENCRYPTION_KEY.length < 16) { console.error('Refusing to start: ENCRYPTION_KEY must be at least 16 characters.'); process.exit(1); }
-  const sf = path.join(DATA, 'encryption-salt');
-  let salt;
-  try { salt = fs.readFileSync(sf); } catch { salt = crypto.randomBytes(16); fs.writeFileSync(sf, salt); }
-  MASTER = crypto.scryptSync(process.env.ENCRYPTION_KEY, salt, 32, { N: 1 << 15, r: 8, p: 1, maxmem: 128 * 1024 * 1024 });
+// ---------- encryption at rest (always on) ----------
+// Everything stored (messages, notes, file names and contents, devices, webhooks) is encrypted
+// with a random data key. That key is kept in key.json, locked with a key derived from
+// APP_PASSWORD (scrypt), so a copy of the data folder is unreadable without the password.
+const KEY_FILE = path.join(DATA, 'key.json');
+const LEGACY_SALT = path.join(DATA, 'encryption-salt');
+const KDF = { N: 1 << 17, r: 8, p: 1 }; // about 128 MB of memory per guess
+function deriveKek(password, salt, kdf) {
+  return crypto.scryptSync(password, salt, 32, { N: kdf.N, r: kdf.r, p: kdf.p, maxmem: 512 * 1024 * 1024 });
 }
-const MSG_KEY = MASTER && crypto.createHmac('sha256', MASTER).update('messages').digest();
-function sealLine(obj) {
-  const plain = JSON.stringify(obj);
-  if (!MASTER) return plain + '\n';
+function lockKey(dek, password) {
+  const salt = crypto.randomBytes(16);
   const iv = crypto.randomBytes(12);
-  const c = crypto.createCipheriv('aes-256-gcm', MSG_KEY, iv);
+  const c = crypto.createCipheriv('aes-256-gcm', deriveKek(password, salt, KDF), iv);
+  const ct = Buffer.concat([c.update(dek), c.final()]);
+  return { v: 1, kdf: { name: 'scrypt', ...KDF }, salt: salt.toString('base64'), key: Buffer.concat([iv, c.getAuthTag(), ct]).toString('base64') };
+}
+function unlockKey(stored, password) {
+  try {
+    const buf = Buffer.from(stored.key, 'base64');
+    const d = crypto.createDecipheriv('aes-256-gcm', deriveKek(password, Buffer.from(stored.salt, 'base64'), stored.kdf), buf.subarray(0, 12));
+    d.setAuthTag(buf.subarray(12, 28));
+    return Buffer.concat([d.update(buf.subarray(28)), d.final()]);
+  } catch { return null; }
+}
+function saveKeyFile(stored) {
+  fs.writeFileSync(KEY_FILE + '.tmp', JSON.stringify(stored));
+  fs.renameSync(KEY_FILE + '.tmp', KEY_FILE);
+}
+function refuse(message) { console.error(`Refusing to start: ${message}`); process.exit(1); }
+
+let MASTER = null;
+let keyStored = null;
+if (fs.existsSync(KEY_FILE)) {
+  try { keyStored = JSON.parse(fs.readFileSync(KEY_FILE, 'utf8')); } catch { refuse(`${KEY_FILE} is damaged. Restore it from a backup.`); }
+  MASTER = unlockKey(keyStored, PASSWORD);
+  if (!MASTER && process.env.OLD_APP_PASSWORD) {
+    MASTER = unlockKey(keyStored, process.env.OLD_APP_PASSWORD);
+    if (!MASTER) refuse('neither APP_PASSWORD nor OLD_APP_PASSWORD unlocks the stored data.');
+    keyStored = lockKey(MASTER, PASSWORD);
+    saveKeyFile(keyStored);
+    console.log('The data is now locked with the new APP_PASSWORD. Remove OLD_APP_PASSWORD from the settings.');
+  }
+  if (!MASTER) {
+    refuse('APP_PASSWORD does not unlock the stored data. If you changed the password, '
+      + 'set OLD_APP_PASSWORD to the previous one for one start, and the data is moved to the new password.');
+  }
+  if (process.env.ENCRYPTION_KEY) console.log('ENCRYPTION_KEY is no longer used and can be removed: the data is locked with APP_PASSWORD.');
+} else {
+  if (fs.existsSync(LEGACY_SALT)) {
+    // Data from an older version, encrypted with ENCRYPTION_KEY: keep its key, now locked with the password.
+    if (!process.env.ENCRYPTION_KEY) refuse('this data was encrypted with ENCRYPTION_KEY. Set it for one start so the data can be moved to password-based encryption.');
+    MASTER = crypto.scryptSync(process.env.ENCRYPTION_KEY, fs.readFileSync(LEGACY_SALT), 32, { N: 1 << 15, r: 8, p: 1, maxmem: 128 * 1024 * 1024 });
+    // Check the key against stored data before locking it in.
+    let sample = null;
+    try { sample = fs.readFileSync(MSG_FILE, 'utf8').split('\n').map((l) => { try { return JSON.parse(l); } catch { return null; } }).find((o) => o && o.e); } catch {}
+    if (sample) {
+      try {
+        const buf = Buffer.from(sample.e, 'base64');
+        const d = crypto.createDecipheriv('aes-256-gcm', crypto.createHmac('sha256', MASTER).update('messages').digest(), buf.subarray(0, 12));
+        d.setAuthTag(buf.subarray(12, 28));
+        Buffer.concat([d.update(buf.subarray(28)), d.final()]);
+      } catch { refuse('ENCRYPTION_KEY does not decrypt the stored messages. Check that it is the one the data was saved with.'); }
+    }
+    console.log('Moved encryption from ENCRYPTION_KEY to APP_PASSWORD. ENCRYPTION_KEY can be removed after this start.');
+  } else {
+    MASTER = crypto.randomBytes(32);
+  }
+  keyStored = lockKey(MASTER, PASSWORD);
+  saveKeyFile(keyStored);
+}
+const subKey = (purpose) => crypto.createHmac('sha256', MASTER).update(purpose).digest();
+const MSG_KEY = subKey('messages');
+function seal(key, plain) {
+  const iv = crypto.randomBytes(12);
+  const c = crypto.createCipheriv('aes-256-gcm', key, iv);
   const ct = Buffer.concat([c.update(plain, 'utf8'), c.final()]);
-  return JSON.stringify({ e: Buffer.concat([iv, c.getAuthTag(), ct]).toString('base64') }) + '\n';
+  return Buffer.concat([iv, c.getAuthTag(), ct]).toString('base64');
 }
-function openLine(o) {
-  if (!o.e) return o;
-  if (!MASTER) throw new Error('The stored messages are encrypted but ENCRYPTION_KEY is not set.');
-  const buf = Buffer.from(o.e, 'base64');
-  const d = crypto.createDecipheriv('aes-256-gcm', MSG_KEY, buf.subarray(0, 12));
+function unseal(key, b64, what) {
+  const buf = Buffer.from(b64, 'base64');
+  const d = crypto.createDecipheriv('aes-256-gcm', key, buf.subarray(0, 12));
   d.setAuthTag(buf.subarray(12, 28));
-  try { return JSON.parse(Buffer.concat([d.update(buf.subarray(28)), d.final()]).toString('utf8')); }
-  catch { throw new Error('The stored messages cannot be decrypted. ENCRYPTION_KEY is different from the one they were saved with.'); }
+  try { return Buffer.concat([d.update(buf.subarray(28)), d.final()]).toString('utf8'); }
+  catch { throw new Error(`The stored ${what} cannot be decrypted. The data folder may be damaged or mixed with another one.`); }
 }
+const sealLine = (obj) => JSON.stringify({ e: seal(MSG_KEY, JSON.stringify(obj)) }) + '\n';
+const openLine = (o) => (o.e ? JSON.parse(unseal(MSG_KEY, o.e, 'messages')) : o); // plain lines: older versions
+// Small files (notes, devices, webhooks) are stored whole as one encrypted block.
+function writeSealed(file, purpose, value) {
+  fs.writeFileSync(file + '.tmp', JSON.stringify({ e: seal(subKey(purpose), JSON.stringify(value)) }));
+  fs.renameSync(file + '.tmp', file);
+}
+function readSealed(file, purpose, fallback) {
+  let raw;
+  try { raw = fs.readFileSync(file, 'utf8'); } catch { return fallback; }
+  const o = JSON.parse(raw);
+  return o && typeof o.e === 'string' && Object.keys(o).length === 1 ? JSON.parse(unseal(subKey(purpose), o.e, purpose)) : o;
+}
+if (PASSWORD_GENERATED) {
+  console.warn('Warning: the generated password is saved in the data folder, so the encryption does not protect '
+    + 'a copy of that folder. Set APP_PASSWORD to a password of your own.');
+}
+
 // File contents use AES-256-CTR with a per-file key, which allows seeking.
 const fileKey = (id) => crypto.createHmac('sha256', MASTER).update('file:' + id).digest();
 function fileCipher(id, ivHex, offset = 0) {
@@ -154,8 +228,8 @@ async function loadMessages() {
   messages = [...byId.values()].sort((a, b) => a.ts - b.ts);
   if (RETENTION_MS) messages = messages.filter((m) => Date.now() - m.ts < RETENTION_MS);
   for (const m of messages) if (m.file) fileIndex.set(m.file.id, m);
-  // Encrypt files that were stored before ENCRYPTION_KEY was set.
-  if (MASTER) for (const m of messages) {
+  // Encrypt files that were stored by a version without encryption.
+  for (const m of messages) {
     if (!m.file || m.file.iv) continue;
     const p = path.join(UPLOADS, m.file.id);
     if (!fs.existsSync(p)) continue;
@@ -178,8 +252,9 @@ async function loadMessages() {
 // Only a hash of the token is stored.
 const HOOK_FILE = path.join(DATA, 'hooks.json');
 let hooks = []; // {id, name, hash, created, lastUsed, count}
-try { hooks = JSON.parse(fs.readFileSync(HOOK_FILE, 'utf8')); } catch {}
-const saveHooksNow = () => { fs.writeFileSync(HOOK_FILE + '.tmp', JSON.stringify(hooks)); fs.renameSync(HOOK_FILE + '.tmp', HOOK_FILE); };
+hooks = readSealed(HOOK_FILE, 'hooks', []);
+const saveHooksNow = () => writeSealed(HOOK_FILE, 'hooks', hooks);
+if (hooks.length && !/^\{"e":/.test(fs.readFileSync(HOOK_FILE, 'utf8'))) saveHooksNow(); // encrypt an older plain file
 let hookSaveTimer = null;
 function saveHooks() {
   if (hookSaveTimer) return;
@@ -227,7 +302,7 @@ function deleteMessage(id) {
   const i = messages.findIndex((m) => m.id === id);
   if (i < 0) return false;
   const [m] = messages.splice(i, 1);
-  fs.appendFileSync(MSG_FILE, JSON.stringify({ del: id }) + '\n');
+  fs.appendFileSync(MSG_FILE, sealLine({ del: id }));
   if (m.file) {
     fileIndex.delete(m.file.id);
     fs.rm(path.join(UPLOADS, m.file.id), { force: true }, () => {});
@@ -239,13 +314,31 @@ if (RETENTION_MS) setInterval(() => {
   while (messages.length && Date.now() - messages[0].ts > RETENTION_MS) deleteMessage(messages[0].id);
 }, 600e3).unref();
 
+// ---------- notes ----------
+const NOTES_FILE = path.join(DATA, 'notes.json');
+const notes = new Map(); // id -> {id, title, body, created, updated, by}
+for (const n of readSealed(NOTES_FILE, 'notes', [])) notes.set(n.id, n);
+const saveNotes = () => writeSealed(NOTES_FILE, 'notes', [...notes.values()]);
+const MAX_NOTES = 5000;
+function noteFields(body) {
+  const title = typeof body.title === 'string' ? body.title.replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 200) : '';
+  const text = typeof body.body === 'string' ? body.body : '';
+  if (text.length > 500000) throw Object.assign(new Error('Note is too long (500,000 characters at most)'), { status: 413 });
+  return { title, body: text };
+}
+
 // ---------- sessions ----------
 const sessions = new Map(); // sha256(token) hex -> {id, device, created, seen}
+// Sessions are tied to the current password lock: changing the password signs every device out.
+const PASS_ID = crypto.createHmac('sha256', MASTER).update('sessions:' + keyStored.salt).digest('hex').slice(0, 16);
 try {
-  const saved = JSON.parse(fs.readFileSync(SESS_FILE, 'utf8'));
-  if (saved.passId === PASS_ID) for (const [k, v] of Object.entries(saved.sessions)) sessions.set(k, v);
+  const saved = readSealed(SESS_FILE, 'sessions', null);
+  if (saved && saved.passId === PASS_ID) for (const [k, v] of Object.entries(saved.sessions)) sessions.set(k, v);
 } catch {}
-const sessionsJson = () => JSON.stringify({ passId: PASS_ID, sessions: Object.fromEntries(sessions) });
+const sessionsJson = () => JSON.stringify({ e: seal(subKey('sessions'), JSON.stringify({ passId: PASS_ID, sessions: Object.fromEntries(sessions) })) });
+try { // replace a device list left unencrypted by an older version
+  if (!/^\{"e":/.test(fs.readFileSync(SESS_FILE, 'utf8'))) fs.writeFileSync(SESS_FILE, sessionsJson(), { mode: 0o600 });
+} catch {}
 let saveTimer = null;
 function saveSessions() {
   if (saveTimer) return;
@@ -378,7 +471,6 @@ async function sendFile(req, res, m, forceDownload) {
   if (req.method === 'HEAD' || st.size === 0) return res.end();
   const src = fs.createReadStream(p, { start, end }).on('error', () => res.destroy());
   if (f.iv) {
-    if (!MASTER) return res.destroy();
     src.pipe(fileCipher(f.id, f.iv, start)).pipe(res);
   } else src.pipe(res);
 }
@@ -394,7 +486,7 @@ async function handleUpload(req, res, url, sess) {
   if (!/^[\w.+-]+\/[\w.+-]+$/.test(type)) type = 'application/octet-stream';
   const id = newId();
   const dest = path.join(UPLOADS, id);
-  const iv = MASTER ? crypto.randomBytes(16).toString('hex') : null;
+  const iv = crypto.randomBytes(16).toString('hex');
   let size = 0;
   const counter = new Transform({
     transform(chunk, _enc, cb) {
@@ -590,6 +682,33 @@ async function handle(req, res) {
     hooks = hooks.filter((h) => h.id !== mm[1]); saveHooksNow();
     return json(res, 200, { ok: true });
   }
+  if (p === '/api/notes' && method === 'GET') {
+    return json(res, 200, { notes: [...notes.values()].sort((a, b) => b.updated - a.updated) });
+  }
+  if (p === '/api/notes' && method === 'POST') {
+    if (notes.size >= MAX_NOTES) return json(res, 400, { error: `Limit of ${MAX_NOTES} notes reached. Delete some first.` });
+    const f = noteFields(await readJson(req, 2 * 1024 * 1024));
+    const now = Date.now();
+    const n = { id: newId(), ...f, created: now, updated: now, by: sess.device };
+    notes.set(n.id, n); saveNotes();
+    broadcast('note', n);
+    return json(res, 201, n);
+  }
+  if ((mm = /^\/api\/notes\/([a-f0-9]{32})$/.exec(p)) && method === 'PUT') {
+    const n = notes.get(mm[1]);
+    if (!n) return json(res, 404, { error: 'This note was deleted on another device' });
+    const body = await readJson(req, 2 * 1024 * 1024);
+    // `base` is the version the editor started from: refuse to overwrite a newer edit from another device.
+    if (body.base !== undefined && body.base !== n.updated) return json(res, 409, { error: 'Changed on another device', note: n });
+    Object.assign(n, noteFields(body), { updated: Math.max(Date.now(), n.updated + 1), by: sess.device });
+    saveNotes();
+    broadcast('note', n);
+    return json(res, 200, n);
+  }
+  if ((mm = /^\/api\/notes\/([a-f0-9]{32})$/.exec(p)) && method === 'DELETE') {
+    if (notes.delete(mm[1])) { saveNotes(); broadcast('noteDelete', { id: mm[1] }); }
+    return json(res, 200, { ok: true });
+  }
   if (p === '/api/sessions' && method === 'GET') {
     const list = [...sessions.values()]
       .map((s) => ({ id: s.id, device: s.device, created: s.created, seen: s.seen, current: s.id === sess.id }))
@@ -616,7 +735,7 @@ const server = http.createServer((req, res) => {
 server.requestTimeout = 0; // large uploads on slow links
 loadMessages().then(() => {
   server.listen(PORT, () => console.log(`Flowchat listening on :${PORT}, data in ${DATA}` +
-    ` (encryption at rest: ${MASTER ? 'on' : 'off'}, two-step sign-in: ${TOTP_KEY ? 'on' : 'off'})`));
+    ` (data encrypted with APP_PASSWORD, two-step sign-in: ${TOTP_KEY ? 'on' : 'off'})`));
 }, (e) => { console.error(`Refusing to start: ${e.message}`); process.exit(1); });
 for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => {
   try { fs.writeFileSync(SESS_FILE, sessionsJson(), { mode: 0o600 }); } catch {}

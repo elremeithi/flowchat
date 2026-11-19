@@ -15,7 +15,7 @@
   <form id="loginForm" class="login-card">
     <img src="/icon.svg" alt="" width="48" height="48">
     <h1>Flowchat</h1>
-    <p class="muted">Your notes, links and files on every device.</p>
+    <p class="muted">Your chat, notes and files on every device.</p>
     <label for="password">Password</label>
     <input id="password" type="password" autocomplete="current-password" required>
     <label for="device">Name this device</label>
@@ -37,7 +37,12 @@
     <button id="devicesBtn" type="button" class="ghost">Settings</button>
     <button id="logoutBtn" type="button" class="ghost">Sign out</button>
   </header>
+  <nav class="tabs" role="tablist" aria-label="Sections">
+    <a id="tabChat" class="tab" role="tab" href="#chat" aria-controls="chatView">Chat<span id="chatDot" class="dot" hidden></span></a>
+    <a id="tabNotes" class="tab" role="tab" href="#notes" aria-controls="notesView">Notes</a>
+  </nav>
 
+  <section id="chatView" class="view" role="tabpanel" aria-labelledby="tabChat">
   <div id="scroll" class="scroll">
     <div class="column">
       <button id="earlier" type="button" class="ghost earlier" hidden>Load earlier messages</button>
@@ -63,6 +68,41 @@
     </div>
   </footer>
   <div id="drop" class="drop" hidden><span>Drop to send</span></div>
+  </section>
+
+  <section id="notesView" class="view notes" role="tabpanel" aria-labelledby="tabNotes" hidden>
+    <div class="notes-list-pane">
+      <div class="notes-tools">
+        <input id="noteSearch" type="search" placeholder="Search notes" aria-label="Search notes" autocomplete="off">
+        <button id="noteNew" type="button" class="primary">New note</button>
+      </div>
+      <ul id="noteList" class="note-list"></ul>
+      <div id="notesEmpty" class="empty notes-empty" hidden>
+        <p><strong>No notes yet.</strong></p>
+        <p>Notes are kept on your server, encrypted, and stay in sync on every signed-in device.</p>
+      </div>
+      <p id="notesNoMatch" class="muted notes-nomatch" hidden>No notes match your search.</p>
+    </div>
+    <div id="noteEditor" class="note-editor" hidden>
+      <div class="editor-bar">
+        <a id="noteBack" class="ghost back" href="#notes">‹ Notes</a>
+        <span id="noteState" class="note-state" aria-live="polite"></span>
+        <button id="noteDelete" type="button" class="ghost">Delete</button>
+      </div>
+      <div id="noteConflict" class="conflict" role="alert" hidden>
+        <span>This note was changed on another device while you were editing.</span>
+        <span class="conflict-actions">
+          <button id="conflictTheirs" type="button" class="ghost">Show their version</button>
+          <button id="conflictMine" type="button" class="primary">Keep mine</button>
+        </span>
+      </div>
+      <input id="noteTitle" class="note-title" type="text" maxlength="200" placeholder="Title" aria-label="Note title" autocomplete="off">
+      <textarea id="noteBody" class="note-body" placeholder="Start writing" aria-label="Note text"></textarea>
+    </div>
+    <div id="notePlaceholder" class="note-placeholder">
+      <p>Pick a note on the left, or start a new one.</p>
+    </div>
+  </section>
 </div>
 
 <dialog id="devicesDlg">
@@ -91,7 +131,7 @@
   <p id="confirmText"></p>
   <form method="dialog" class="dlg-row">
     <button value="no" class="ghost">Cancel</button>
-    <button value="yes" class="danger">Delete</button>
+    <button value="yes" id="confirmYes" class="danger">Delete</button>
   </form>
 </dialog>
 

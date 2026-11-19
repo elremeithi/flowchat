@@ -7,8 +7,8 @@ services:
     ports:
       - "8080:8080"
     environment:
-      APP_PASSWORD: "${APP_PASSWORD:-}"            # required: a long password of your own
-      ENCRYPTION_KEY: "${ENCRYPTION_KEY:-}"          # recommended: encrypts messages and files on disk. Keep a copy; without it the data is unreadable.
+      APP_PASSWORD: "${APP_PASSWORD:-}"            # required: a long password. It also unlocks your stored data: do not lose it
+      OLD_APP_PASSWORD: "${OLD_APP_PASSWORD:-}"  # only when changing the password: the previous one, for one start
       TOTP_SECRET: "${TOTP_SECRET:-}"             # recommended: authenticator-app code at sign-in (see README)
       REQUIRE_HTTPS: "${REQUIRE_HTTPS:-0}"          # set to 1 once it runs behind an HTTPS proxy
       ALLOWED_HOSTS: "${ALLOWED_HOSTS:-}"           # e.g. flow.example.com

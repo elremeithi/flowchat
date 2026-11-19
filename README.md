@@ -45,8 +45,9 @@ With the Compose Manager plugin you can use `docker-compose.yml` instead: copy
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `APP_PASSWORD` | generated | Sign-in password. If unset, one is generated and saved in `/data/generated-password.txt`. Changing it signs every device out. |
-| `ENCRYPTION_KEY` | off | Encrypts message text, file names and file contents on disk. 16+ characters. |
+| `APP_PASSWORD` | generated | Sign-in password, and the key that unlocks your stored data. If unset, one is generated and saved in `/data/generated-password.txt`, which leaves the data unprotected; set your own. |
+| `OLD_APP_PASSWORD` | unset | Only when changing the password: the previous one, for one start. See Security. |
+| `ENCRYPTION_KEY` | unset | Only for upgrading data from an older version that used it, for one start. |
 | `TOTP_SECRET` | off | Adds a 6-digit authenticator code to sign-in. |
 | `REQUIRE_HTTPS` | `0` | `1` refuses plain HTTP. Use it behind an HTTPS proxy. |
 | `ALLOWED_HOSTS` | any | Comma-separated addresses the app answers on. |
@@ -144,14 +145,28 @@ Built in, nothing to configure:
 - Data files are readable only by the app's user. The app process runs as a non-root user,
   in a container with a read-only filesystem and almost all capabilities dropped.
 
-Worth switching on:
+**Encryption at rest, always on, with your password.** Messages, notes, file
+names and contents, the device list and webhooks are stored encrypted
+(AES-256-GCM / AES-256-CTR) with a random data key. That key is kept in
+`/data/key.json`, locked with a key derived from `APP_PASSWORD` (scrypt, about
+128 MB of memory per guess, which makes guessing slow). A copy of the appdata
+folder, such as a backup or a stolen disk, is unreadable without the password.
+It does not protect against someone who controls the running server, because
+the password is in the container settings.
 
-**Encryption at rest** (`ENCRYPTION_KEY`). Message text, file names and file
-contents are stored encrypted (AES-256), so a copy of the appdata folder, such
-as a backup, is unreadable without the key. Existing data is encrypted on the
-next start. Store the key outside the server too: if it is lost, the data is
-gone, and it cannot be changed afterwards. It does not protect against someone
-who controls the running server, because the key is in the container settings.
+- **Use a long password.** Someone holding a copy of the folder can try
+  passwords offline; the scrypt cost slows that down but cannot save a short one.
+- **Do not lose the password.** There is no recovery: without it the data is
+  gone. Keep `key.json` together with the rest of the folder in backups.
+- **Changing the password:** set the new one as `APP_PASSWORD` and the previous
+  one as `OLD_APP_PASSWORD`, start once, then remove `OLD_APP_PASSWORD`. Only
+  the small key file is re-locked; every device is signed out. If you change
+  `APP_PASSWORD` without this, the app refuses to start rather than touch the data.
+- **Upgrading from a version that used `ENCRYPTION_KEY`:** keep it set for one
+  start; its data is moved under the password, after which it can be removed.
+  Data from versions without encryption is encrypted automatically on first start.
+
+Worth switching on:
 
 **Two-step sign-in** (`TOTP_SECRET`). Create a secret:
 
@@ -163,7 +178,7 @@ Put the printed `TOTP_SECRET` value in the container settings and add the same
 secret to an authenticator app (manual entry, or turn the printed link into a
 QR code on a device you trust). A stolen password alone then no longer signs in.
 
-**If you think the password leaked:** change `APP_PASSWORD` and restart. Every
+**If you think the password leaked:** change it as described above. Every
 device is signed out. The Devices list shows who is signed in at any time, and
 the container log records each sign-in and failed attempt.
 

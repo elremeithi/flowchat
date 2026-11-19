@@ -66,6 +66,48 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .status.live::before { background: var(--ok); }
 .status.down::before { background: var(--danger); }
 
+.tabs { display: flex; gap: 4px; padding: 6px max(16px, env(safe-area-inset-right, 0px)) 0 max(16px, env(safe-area-inset-left, 0px)); background: var(--surface); border-bottom: 1px solid var(--line); }
+.tab { position: relative; display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px 10px; color: var(--muted); text-decoration: none; font-weight: 600; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tab:hover { color: var(--ink); }
+.tab[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+/* notes: list beside editor on wide screens, one at a time on phones */
+.notes { flex-direction: row; }
+.notes-list-pane { width: 300px; flex: none; display: flex; flex-direction: column; border-right: 1px solid var(--line); background: var(--surface); min-height: 0; }
+.notes-tools { display: flex; gap: 8px; padding: 12px; }
+.notes-tools input { flex: 1; min-width: 0; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+.note-list { list-style: none; margin: 0; padding: 0 8px 12px; overflow-y: auto; flex: 1; }
+.note-item { display: block; width: 100%; text-align: left; padding: 10px 12px; border-radius: 10px; color: inherit; text-decoration: none; }
+.note-item:hover { background: var(--surface-2); }
+.note-item[aria-current="true"] { background: var(--mine); }
+.note-item strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-item .snip { display: block; font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-item .when { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
+.notes-empty { padding: 32px 16px 0; }
+.notes-nomatch { padding: 8px 20px; margin: 0; }
+.note-editor { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; background: var(--bg); }
+.editor-bar { display: flex; align-items: center; gap: 8px; padding: 8px max(16px, env(safe-area-inset-right, 0px)) 8px 16px; }
+.editor-bar .back { display: none; padding: 8px 10px; border-radius: 10px; text-decoration: none; }
+.note-state { flex: 1; font-size: 13px; color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-state.bad { color: var(--danger); }
+.conflict { margin: 0 16px 8px; padding: 10px 12px; border-radius: 10px; background: var(--surface); border: 1px solid var(--danger); display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: 14px; }
+.conflict-actions { display: flex; gap: 8px; margin-left: auto; }
+.note-title { border: 0; background: transparent; font-size: 22px; font-weight: 700; padding: 6px max(16px, env(safe-area-inset-right, 0px)) 6px 20px; outline-offset: -2px; }
+.note-body { flex: 1; border: 0; resize: none; background: transparent; padding: 8px max(16px, env(safe-area-inset-right, 0px)) calc(24px + env(safe-area-inset-bottom, 0px)) 20px; font: 16px/1.6 var(--font); outline-offset: -2px; }
+.note-title:focus-visible, .note-body:focus-visible { outline: 0; }
+.note-placeholder { flex: 1; display: grid; place-items: center; color: var(--muted); padding: 24px; text-align: center; }
+@media (max-width: 720px) {
+  .notes-list-pane { width: 100%; border-right: 0; }
+  .notes.editing .notes-list-pane { display: none; }
+  .note-placeholder { display: none; }
+  .editor-bar .back { display: inline-flex; }
+  .editor-bar { padding-left: max(8px, env(safe-area-inset-left, 0px)); }
+  .note-title { padding-left: max(16px, env(safe-area-inset-left, 0px)); }
+  .note-body { padding-left: max(16px, env(safe-area-inset-left, 0px)); }
+}
+
 .scroll { flex: 1; overflow-y: auto; overscroll-behavior: contain; }
 .scroll .column { padding-block: 16px; display: flex; flex-direction: column; }
 .earlier { align-self: center; margin-bottom: 8px; font-size: 13px; }
