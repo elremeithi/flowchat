@@ -11,32 +11,23 @@ notes, paste links, share files, and pick up where you left off on another devic
 
 ## Install on Unraid
 
-1. Copy this folder to the server, for example to `/mnt/user/appdata/flowchat-src`.
-2. Open the Unraid terminal and build the image:
+Every push to `main` builds a new image and publishes it as
+`ghcr.io/elremeithi/flowchat:latest`, so Unraid can install and update it like
+any other app.
+
+1. Save the template to the Community Applications private folder:
 
    ```bash
-   docker build -t flowchat:latest /mnt/user/appdata/flowchat-src
+   mkdir -p /boot/config/plugins/community.applications/private/elremeithi
+   wget -qO /boot/config/plugins/community.applications/private/elremeithi/flowchat.xml https://raw.githubusercontent.com/elremeithi/flowchat/main/unraid/flowchat.xml
    ```
 
-   Or, if you have the prebuilt `flowchat-image.tar.gz` (Intel/AMD servers), load it instead of building:
-
-   ```bash
-   docker load -i /mnt/user/appdata/flowchat-src/flowchat-image.tar.gz
-   ```
-
-3. Install the template:
-
-   ```bash
-   cp /mnt/user/appdata/flowchat-src/unraid/my-flowchat.xml /boot/config/plugins/dockerMan/templates-user/
-   ```
-
-4. In the Unraid web UI: Docker → Add Container → Template → **flowchat**.
+2. Open **Apps** → **Private Apps** → **flowchat** → **Install**.
    Set **Password**, check the port and data path, then Apply.
-5. Open `http://<server-ip>:8080`.
+3. Open `http://<server-ip>:8080`.
 
-Because the image is built locally, Unraid's "check for updates" reports it as
-unavailable. To update, copy the new source over and repeat step 2, then
-restart the container.
+Updates show up in the Docker tab like any other container. The **Auto Update
+Applications** plugin can install them on a schedule.
 
 With the Compose Manager plugin you can use `docker-compose.yml` instead: copy
 `.env.example` to `.env` next to it and fill in your values (`.env` is git-ignored).
@@ -173,7 +164,7 @@ Worth switching on:
 **Two-step sign-in** (`TOTP_SECRET`). Create a secret:
 
 ```bash
-docker run --rm --entrypoint node flowchat:latest /app/server.js --totp-new
+docker run --rm --entrypoint node ghcr.io/elremeithi/flowchat:latest /app/server.js --totp-new
 ```
 
 Put the printed `TOTP_SECRET` value in the container settings and add the same

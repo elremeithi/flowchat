@@ -1,7 +1,7 @@
 services:
   flowchat:
     build: .
-    image: flowchat:latest
+    image: ghcr.io/elremeithi/flowchat:latest
     container_name: flowchat
     restart: unless-stopped
     ports:

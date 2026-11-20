@@ -1,7 +1,11 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>flowchat</Name>
-  <Repository>flowchat:latest</Repository>
+  <Repository>ghcr.io/elremeithi/flowchat:latest</Repository>
+  <Registry>https://github.com/elremeithi/flowchat/pkgs/container/flowchat</Registry>
+  <Support>https://github.com/elremeithi/flowchat/issues</Support>
+  <Project>https://github.com/elremeithi/flowchat</Project>
+  <Icon>https://raw.githubusercontent.com/elremeithi/flowchat/main/unraid/icon.png</Icon>
   <Network>bridge</Network>
   <Shell>sh</Shell>
   <Privileged>false</Privileged>
