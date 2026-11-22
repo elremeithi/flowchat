@@ -334,6 +334,17 @@ const CODES_FILE = path.join(DATA, 'codes.json');
 const codes = new Map(); // id -> {id, title, kind, content | image, created, updated, by}
 for (const c of readSealed(CODES_FILE, 'codes', [])) codes.set(c.id, c);
 const saveCodes = () => writeSealed(CODES_FILE, 'codes', [...codes.values()]);
+// Removed codes stay in a "Recently removed" bin for 30 days, so a code deleted on a lost or
+// stolen phone (or by mistake) can be restored. `removed` holds the time it was removed.
+const TRASH_MS = 30 * 86400e3;
+const liveCodes = () => [...codes.values()].filter((c) => !c.removed);
+function purgeTrash() {
+  let gone = 0;
+  for (const [id, c] of codes) if (c.removed && Date.now() - c.removed > TRASH_MS) { codes.delete(id); gone++; }
+  if (gone) saveCodes();
+}
+purgeTrash();
+setInterval(purgeTrash, 3600e3).unref();
 const MAX_CODES = 300;
 const MAX_QR_BYTES = 2331;                 // the most a QR code holds at error correction level M
 const MAX_IMAGE_CHARS = 2 * 1024 * 1024;   // per image, as a data: URL
@@ -748,10 +759,26 @@ async function handle(req, res) {
     return json(res, 200, { ok: true });
   }
   if (p === '/api/codes' && method === 'GET') {
-    return json(res, 200, { codes: [...codes.values()] });
+    return json(res, 200, { codes: liveCodes() });
+  }
+  if (p === '/api/codes/removed' && method === 'GET') {
+    const list = [...codes.values()].filter((c) => c.removed).sort((a, b) => b.removed - a.removed)
+      .map((c) => ({ id: c.id, title: c.title, kind: c.kind, removed: c.removed, removedBy: c.removedBy, purge: c.removed + TRASH_MS }));
+    return json(res, 200, { codes: list });
+  }
+  if ((mm = /^\/api\/codes\/([a-f0-9]{32})\/restore$/.exec(p)) && method === 'POST') {
+    const c = codes.get(mm[1]);
+    if (!c || !c.removed) return json(res, 404, { error: 'This code is no longer in Recently removed' });
+    delete c.removed; delete c.removedBy;
+    Object.assign(c, { updated: Math.max(Date.now(), c.updated + 1), by: sess.device });
+    saveCodes();
+    console.log(`QR code restored: "${c.title}" by "${sess.device}"`);
+    broadcast('code', c);
+    return json(res, 200, c);
   }
   if (p === '/api/codes' && method === 'POST') {
-    if (codes.size >= MAX_CODES) return json(res, 400, { error: `Limit of ${MAX_CODES} codes reached. Remove some first.` });
+    if (liveCodes().length >= MAX_CODES) return json(res, 400, { error: `Limit of ${MAX_CODES} codes reached. Remove some first.` });
+    if (codes.size >= MAX_CODES * 2) return json(res, 400, { error: 'Recently removed is full. Empty it in Settings first.' });
     const f = codeFields(await readJson(req, 3 * 1024 * 1024));
     const now = Date.now();
     const c = { id: newId(), ...f, created: now, updated: now, by: sess.device };
@@ -761,14 +788,23 @@ async function handle(req, res) {
   }
   if ((mm = /^\/api\/codes\/([a-f0-9]{32})$/.exec(p)) && method === 'PUT') {
     const c = codes.get(mm[1]);
-    if (!c) return json(res, 404, { error: 'This code was removed on another device' });
+    if (!c || c.removed) return json(res, 404, { error: 'This code was removed on another device' });
     Object.assign(c, codeFields(await readJson(req, 64 * 1024), c), { updated: Math.max(Date.now(), c.updated + 1), by: sess.device });
     saveCodes();
     broadcast('code', c);
     return json(res, 200, c);
   }
   if ((mm = /^\/api\/codes\/([a-f0-9]{32})$/.exec(p)) && method === 'DELETE') {
-    if (codes.delete(mm[1])) { saveCodes(); broadcast('codeDelete', { id: mm[1] }); }
+    const c = codes.get(mm[1]);
+    if (c && !c.removed) {
+      // Moved to Recently removed, not deleted.
+      c.removed = Date.now(); c.removedBy = sess.device;
+      saveCodes();
+      console.log(`QR code removed: "${c.title}" by "${sess.device}" (kept 30 days in Recently removed)`);
+      broadcast('codeDelete', { id: c.id });
+    } else if (c && c.removed && url.searchParams.get('forever') === '1') {
+      codes.delete(c.id); saveCodes(); // deleted for good from the bin
+    }
     return json(res, 200, { ok: true });
   }
   if (p === '/api/sessions' && method === 'GET') {

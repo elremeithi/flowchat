@@ -33,6 +33,15 @@ brightness and stays on while a code is shown.
   both places, the last change to reach the server wins; a code edited on the phone
   but removed elsewhere is kept. Pictures are read with ZXing, which also recognises
   barcodes and boarding passes. Signing out removes every code from the phone.
+- **If a phone is lost:** your codes are on the server, encrypted with your
+  password, so nothing is lost with the phone. Sign the phone out in Settings →
+  Signed-in devices: it erases its own copy the next time it connects, and the
+  server keeps everything. Sign in on the new phone and the codes come back.
+  Codes added on the lost phone but never synced (it was offline the whole time)
+  can't be recovered.
+- **Recently removed:** a removed code, including one removed on a phone, stays on
+  the server for 30 days. Restore it, or delete it for good, in Settings →
+  Recently removed QR codes.
 - **In browsers without a connection:** codes are kept in the browser so they can
   be shown when the server is out of reach, if the app is served over HTTPS
   (browsers only allow offline pages on HTTPS). Untick "Keep codes on this device"

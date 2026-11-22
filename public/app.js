@@ -401,7 +401,7 @@ if (androidApp) {
 }
 $('devicesBtn').addEventListener('click', async () => {
   $('hookResult').hidden = true; $('hookError').hidden = true;
-  await Promise.all([renderDevices(), renderHooks()]);
+  await Promise.all([renderDevices(), renderHooks(), renderTrash()]);
   $('devicesDlg').showModal();
 });
 async function renderDevices() {
@@ -421,6 +421,36 @@ async function renderDevices() {
     }
     list.append(li);
   }
+}
+
+// ---------- recently removed QR codes ----------
+async function renderTrash() {
+  const list = $('trashList');
+  let removed = [];
+  try { removed = (await api('GET', '/api/codes/removed')).codes; } catch { /* older server: section stays empty */ }
+  list.textContent = '';
+  for (const c of removed) {
+    const li = el('li');
+    const info = el('div', 'd-info');
+    const left = Math.max(1, Math.ceil((c.purge - Date.now()) / 86400e3));
+    info.append(el('span', 'd-name', c.title),
+      el('span', 'd-seen', `Removed ${fmtAgo(c.removed)}${c.removedBy ? ' on ' + c.removedBy : ''} · deleted for good in ${left} day${left === 1 ? '' : 's'}`));
+    const restore = el('button', 'ghost', 'Restore'); restore.type = 'button';
+    restore.addEventListener('click', async () => {
+      try { await api('POST', `/api/codes/${c.id}/restore`); } catch (e) { setStatus(e.message, 'down'); }
+      renderTrash();
+    });
+    const forget = el('button', 'ghost', 'Delete now'); forget.type = 'button';
+    forget.addEventListener('click', () => {
+      confirmAction(`Delete "${c.title}" for good? It can't be restored afterwards.`, async () => {
+        try { await api('DELETE', `/api/codes/${c.id}?forever=1`); } catch (e) { setStatus(e.message, 'down'); }
+        renderTrash();
+      });
+    });
+    li.append(info, restore, forget);
+    list.append(li);
+  }
+  $('trashEmpty').hidden = removed.length > 0;
 }
 
 // ---------- webhooks ----------
@@ -997,7 +1027,7 @@ $('codeDelete').addEventListener('click', () => {
   const c = editing;
   if (!c) return;
   $('codeDlg').close();
-  confirmAction(`Remove "${c.title}" from every device?`, async () => {
+  confirmAction(`Remove "${c.title}" from every device? You can restore it from Settings for 30 days.`, async () => {
     try { await api('DELETE', `/api/codes/${c.id}`); codeRemoved(c.id); }
     catch (ex) { setStatus(ex.message, 'down'); }
   });
