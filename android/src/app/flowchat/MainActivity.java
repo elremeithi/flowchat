@@ -68,6 +68,9 @@ public final class MainActivity extends Activity {
             return;
         }
         AlertService.createChannels(this);
+        CodeStore.get(this).preload();
+        CrashReport.install(this);
+        CrashReport.showIfAny(this);
 
         FrameLayout frame = new FrameLayout(this);
         web = new WebView(this);
@@ -460,7 +463,11 @@ public final class MainActivity extends Activity {
     }
 
     private void openCodes() {
-        startActivity(new Intent(this, CodesActivity.class));
+        try {
+            startActivity(new Intent(this, CodesActivity.class));
+        } catch (RuntimeException e) {
+            toast("Could not open QR codes: " + e);
+        }
     }
 
     private View buildCodesBar() {

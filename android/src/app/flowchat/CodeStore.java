@@ -42,6 +42,8 @@ final class CodeStore {
     static final int MAX_QR_BYTES = CodeSync.MAX_QR_BYTES;
     private static final String KEY_ALIAS = "flowchat-codes";
     private static final String FILE = "codes.enc";
+    private static final String KEY_FILE = "codes.key"; // the data key, wrapped by the keystore key
+    private SecretKey dataKey;
     private static CodeStore instance;
 
     private final Context app;
@@ -50,6 +52,7 @@ final class CodeStore {
     private final List<Listener> listeners = new CopyOnWriteArrayList<>();
     private final CodeSync data = new CodeSync();
     private boolean loaded;
+    private boolean needsResave;
     private volatile State state = State.IDLE;
     private volatile String stateDetail = "";
     private volatile boolean syncQueued;
@@ -86,6 +89,18 @@ final class CodeStore {
 
     String stateDetail() {
         return stateDetail;
+    }
+
+    /** Reads and decrypts the codes in the background, so the codes screen opens at once. */
+    void preload() {
+        worker.execute(new Runnable() {
+            @Override
+            public void run() {
+                synchronized (CodeStore.this) {
+                    ensureLoaded();
+                }
+            }
+        });
     }
 
     // ---------- reading and changing ----------
@@ -133,6 +148,8 @@ final class CodeStore {
         loaded = true;
         new File(app.getFilesDir(), FILE).delete();
         new File(app.getFilesDir(), FILE + ".tmp").delete();
+        new File(app.getFilesDir(), KEY_FILE).delete();
+        dataKey = null;
         try {
             KeyStore ks = KeyStore.getInstance("AndroidKeyStore");
             ks.load(null);
@@ -173,19 +190,29 @@ final class CodeStore {
             return;
         }
         setState(State.SYNCING, null);
-        CodeSync.Outcome outcome;
-        String problem;
-        // One lock for the whole sync keeps edits made meanwhile from being lost; edits wait for it.
+        // The sync runs on a copy, without the lock, so the screens never wait for the network.
+        CodeSync work;
+        java.util.Map<String, Integer> before;
         synchronized (this) {
             ensureLoaded();
-            outcome = data.sync(new Api(server, cookie), new Runnable() {
-                @Override
-                public void run() {
-                    save();
-                }
-            });
+            work = data.copy();
+            before = data.revisions();
+        }
+        CodeSync.Outcome outcome = work.sync(new Api(server, cookie), new Runnable() {
+            @Override
+            public void run() {
+                // saved once below, together with any changes made meanwhile
+            }
+        });
+        String problem;
+        synchronized (this) {
+            if (outcome != CodeSync.Outcome.SIGNED_OUT) {
+                data.adopt(work, before);
+                save();
+            }
             problem = data.problem;
         }
+        changed();
         switch (outcome) {
             case SYNCED:
                 setState(State.SYNCED, null);
@@ -216,11 +243,17 @@ final class CodeStore {
         if (!f.exists()) return;
         try {
             byte[] all = readFile(f);
+            boolean legacy = !new File(app.getFilesDir(), KEY_FILE).exists(); // saved by app 1.3
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-            cipher.init(Cipher.DECRYPT_MODE, key(), new GCMParameterSpec(128, all, 0, 12));
+            cipher.init(Cipher.DECRYPT_MODE, legacy ? keystoreKey() : dataKey(), new GCMParameterSpec(128, all, 0, 12));
             byte[] plain = cipher.doFinal(all, 12, all.length - 12);
+            if (legacy) needsResave = true;
             JSONArray arr = new JSONObject(new String(plain, StandardCharsets.UTF_8)).optJSONArray("codes");
             if (arr != null) for (int i = 0; i < arr.length(); i++) data.codes.add(CodeSync.Code.fromJson(arr.getJSONObject(i)));
+            if (needsResave) {
+                needsResave = false;
+                save(); // move to the faster format
+            }
         } catch (Exception e) {
             // Unreadable (for example the key was reset by a phone restore): start empty and refetch.
             data.codes.clear();
@@ -234,8 +267,9 @@ final class CodeStore {
             for (CodeSync.Code c : data.codes) arr.put(c.toJson());
             byte[] plain = new JSONObject().put("codes", arr).toString().getBytes(StandardCharsets.UTF_8);
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-            cipher.init(Cipher.ENCRYPT_MODE, key());
-            byte[] iv = cipher.getIV();
+            byte[] iv = new byte[12];
+            new java.security.SecureRandom().nextBytes(iv);
+            cipher.init(Cipher.ENCRYPT_MODE, dataKey(), new GCMParameterSpec(128, iv));
             byte[] ct = cipher.doFinal(plain);
             File tmp = new File(app.getFilesDir(), FILE + ".tmp");
             FileOutputStream out = new FileOutputStream(tmp);
@@ -252,7 +286,40 @@ final class CodeStore {
         }
     }
 
-    private static SecretKey key() throws Exception {
+    /**
+     * The key that encrypts the codes file: random, kept in codes.key encrypted by the keystore
+     * key (which never leaves Android's secure hardware). Unwrapped once, so large files stay fast.
+     */
+    private SecretKey dataKey() throws Exception {
+        if (dataKey != null) return dataKey;
+        File kf = new File(app.getFilesDir(), KEY_FILE);
+        Cipher c = Cipher.getInstance("AES/GCM/NoPadding");
+        if (kf.exists()) {
+            byte[] all = readFile(kf);
+            c.init(Cipher.DECRYPT_MODE, keystoreKey(), new GCMParameterSpec(128, all, 0, 12));
+            dataKey = new javax.crypto.spec.SecretKeySpec(c.doFinal(all, 12, all.length - 12), "AES");
+            return dataKey;
+        }
+        byte[] raw = new byte[32];
+        new java.security.SecureRandom().nextBytes(raw);
+        c.init(Cipher.ENCRYPT_MODE, keystoreKey());
+        byte[] iv = c.getIV();
+        byte[] wrapped = c.doFinal(raw);
+        File tmp = new File(app.getFilesDir(), KEY_FILE + ".tmp");
+        FileOutputStream out = new FileOutputStream(tmp);
+        try {
+            out.write(iv);
+            out.write(wrapped);
+            out.getFD().sync();
+        } finally {
+            out.close();
+        }
+        if (!tmp.renameTo(kf)) throw new IOException("rename failed");
+        dataKey = new javax.crypto.spec.SecretKeySpec(raw, "AES");
+        return dataKey;
+    }
+
+    private static SecretKey keystoreKey() throws Exception {
         KeyStore ks = KeyStore.getInstance("AndroidKeyStore");
         ks.load(null);
         if (!ks.containsAlias(KEY_ALIAS)) {

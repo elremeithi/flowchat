@@ -394,7 +394,14 @@ addEventListener('drop', (e) => {
 });
 
 // ---------- devices ----------
-if (nativeCodes) $('codesOffline').closest('label').hidden = true;
+if (nativeCodes) {
+  $('codesOffline').closest('label').hidden = true;
+  // Open the app's QR codes screen straight from the tap, without going through the page's routing.
+  $('tabCodes').addEventListener('click', (e) => {
+    e.preventDefault();
+    try { androidApp.openCodes(); } catch (err) { setStatus('Could not open QR codes: ' + err.message, 'down'); }
+  });
+}
 if (androidApp) {
   $('appSettingsBtn').hidden = false;
   $('appSettingsBtn').addEventListener('click', () => { try { androidApp.openAppSettings(); } catch {} });
@@ -1047,7 +1054,6 @@ function startOffline() {
   if (nativeCodes) {
     try { androidApp.pageHasCodes(); androidApp.openCodes(); } catch {}
     $('codesEmpty').querySelector('p:last-child').textContent = 'Your QR codes are in the app: tap the QR codes tab above, or "Try again" once your server is reachable.';
-    $('tabCodes').addEventListener('click', (e) => { e.preventDefault(); try { androidApp.openCodes(); } catch {} });
   }
   if (!/^#code-/.test(location.hash)) location.replace('#codes');
   route();

@@ -32,6 +32,14 @@ final class CodeSync {
         String by;
         boolean dirty; // changed here, not yet on the server
         boolean deleted; // removed here, server not yet told
+        int rev; // counts local changes, to tell whether a code changed during a sync (not stored)
+
+        Code copy() {
+            Code c = new Code();
+            c.id = id; c.sid = sid; c.title = title; c.kind = kind; c.content = content; c.image = image;
+            c.updated = updated; c.by = by; c.dirty = dirty; c.deleted = deleted; c.rev = rev;
+            return c;
+        }
 
         JSONObject toJson() throws JSONException {
             return new JSONObject().put("id", id).put("sid", sid == null ? JSONObject.NULL : sid).put("title", title)
@@ -115,6 +123,7 @@ final class CodeSync {
         c.updated = System.currentTimeMillis();
         c.by = "This phone";
         c.dirty = true;
+        c.rev = 1;
         codes.add(c);
         return c;
     }
@@ -126,6 +135,7 @@ final class CodeSync {
         if ("text".equals(c.kind) && content != null) c.content = content;
         c.updated = System.currentTimeMillis();
         c.dirty = true;
+        c.rev++;
         return true;
     }
 
@@ -134,7 +144,49 @@ final class CodeSync {
         if (c == null) return false;
         if (c.sid == null) codes.remove(c);
         else c.deleted = true;
+        c.rev++;
         return true;
+    }
+
+    /** A deep copy, to sync without holding up the screens. */
+    CodeSync copy() {
+        CodeSync s = new CodeSync();
+        for (Code c : codes) s.codes.add(c.copy());
+        return s;
+    }
+
+    /** Each code's change count, taken when a sync starts. */
+    Map<String, Integer> revisions() {
+        Map<String, Integer> m = new HashMap<>();
+        for (Code c : codes) m.put(c.id, c.rev);
+        return m;
+    }
+
+    /**
+     * Takes the result of a sync that ran on a copy made when {@code before} was taken. Codes not
+     * changed here meanwhile take the synced state; codes added or changed meanwhile keep their
+     * change (and learn their server id); codes new from the server are added.
+     */
+    void adopt(CodeSync synced, Map<String, Integer> before) {
+        Map<String, Code> after = new HashMap<>();
+        for (Code c : synced.codes) after.put(c.id, c);
+        List<Code> next = new ArrayList<>();
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (Code c : codes) {
+            seen.add(c.id);
+            Integer was = before.get(c.id);
+            Code s = after.get(c.id);
+            if (was != null && was == c.rev) {
+                if (s != null) next.add(s); // otherwise removed by the sync
+            } else {
+                if (s != null && s.sid != null) c.sid = s.sid;
+                next.add(c);
+            }
+        }
+        for (Code s : synced.codes) if (!seen.contains(s.id) && !before.containsKey(s.id)) next.add(s);
+        codes.clear();
+        codes.addAll(next);
+        problem = synced.problem;
     }
 
     // ---------- sync ----------
