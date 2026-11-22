@@ -10,7 +10,6 @@ import android.os.Bundle;
 import android.text.Editable;
 import android.text.TextUtils;
 import android.text.TextWatcher;
-import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -22,6 +21,7 @@ import android.widget.GridView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -39,6 +39,21 @@ public final class CodesActivity extends Activity implements CodeStore.Listener 
     @Override
     protected void onCreate(Bundle saved) {
         super.onCreate(saved);
+        try {
+            build();
+        } catch (Throwable e) {
+            failed(e);
+        }
+    }
+
+    /** Could not open: say so, keep the details for a report, and go back. */
+    private void failed(Throwable e) {
+        CrashReport.record(this, "opening QR codes", e);
+        Toast.makeText(this, "Could not open QR codes: " + e, Toast.LENGTH_LONG).show();
+        finish();
+    }
+
+    private void build() {
         Secure.apply(this);
         setTitle("QR codes");
         if (getActionBar() != null) getActionBar().setDisplayHomeAsUpEnabled(true);
@@ -132,15 +147,20 @@ public final class CodesActivity extends Activity implements CodeStore.Listener 
     @Override
     protected void onResume() {
         super.onResume();
-        Secure.apply(this);
-        store.addListener(this);
-        refresh();
-        store.sync();
+        if (isFinishing() || store == null) return;
+        try {
+            Secure.apply(this);
+            store.addListener(this);
+            refresh();
+            store.sync();
+        } catch (Throwable e) {
+            failed(e);
+        }
     }
 
     @Override
     protected void onPause() {
-        store.removeListener(this);
+        if (store != null) store.removeListener(this);
         super.onPause();
     }
 
@@ -215,7 +235,7 @@ public final class CodesActivity extends Activity implements CodeStore.Listener 
                 card.setPadding(dp(10), dp(10), dp(10), dp(10));
                 GradientDrawable bg = new GradientDrawable();
                 bg.setCornerRadius(dp(14));
-                bg.setColor(themeColor(android.R.attr.colorBackgroundFloating));
+                bg.setColor(0x14888888); // a light tint that works on light and dark themes
                 bg.setStroke(dp(1), 0x33888888);
                 card.setBackground(bg);
                 h = new Holder();
@@ -270,11 +290,6 @@ public final class CodesActivity extends Activity implements CodeStore.Listener 
         }
     }
 
-    private int themeColor(int attr) {
-        TypedValue tv = new TypedValue();
-        getTheme().resolveAttribute(attr, tv, true);
-        return tv.resourceId != 0 ? getColor(tv.resourceId) : tv.data;
-    }
 
     private int dp(int v) {
         return (int) (v * getResources().getDisplayMetrics().density + 0.5f);

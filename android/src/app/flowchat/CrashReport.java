@@ -30,21 +30,27 @@ final class CrashReport {
         Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
             @Override
             public void uncaughtException(Thread t, Throwable e) {
-                try {
-                    StringWriter sw = new StringWriter();
-                    e.printStackTrace(new PrintWriter(sw));
-                    String text = sw.toString();
-                    if (text.length() > 6000) text = text.substring(0, 6000);
-                    app.getSharedPreferences("crash", Context.MODE_PRIVATE).edit()
-                            .putString("report", "Flowchat " + version(app) + ", Android " + Build.VERSION.RELEASE
-                                    + ", " + Build.MANUFACTURER + " " + Build.MODEL + ", thread " + t.getName() + "\n\n" + text)
-                            .commit();
-                } catch (Throwable ignored) {
-                    // never get in the way of the crash itself
-                }
+                record(app, "thread " + t.getName(), e);
                 if (previous != null) previous.uncaughtException(t, e);
             }
         });
+    }
+
+    /** Keeps a problem's details so they are shown (and can be copied) on the next start. */
+    static void record(Context context, String where, Throwable e) {
+        try {
+            Context app = context.getApplicationContext();
+            StringWriter sw = new StringWriter();
+            e.printStackTrace(new PrintWriter(sw));
+            String text = sw.toString();
+            if (text.length() > 6000) text = text.substring(0, 6000);
+            app.getSharedPreferences("crash", Context.MODE_PRIVATE).edit()
+                    .putString("report", "Flowchat " + version(app) + ", Android " + Build.VERSION.RELEASE
+                            + ", " + Build.MANUFACTURER + " " + Build.MODEL + ", " + where + "\n\n" + text)
+                    .commit();
+        } catch (Throwable ignored) {
+            // never get in the way of the problem itself
+        }
     }
 
     static void showIfAny(final Activity activity) {

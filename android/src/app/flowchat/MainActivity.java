@@ -108,6 +108,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onPause() {
         visible = false;
+        if (!Prefs.cookie(this).isEmpty()) CodeStore.get(this).sync();
         CookieManager.getInstance().flush();
         super.onPause();
     }
@@ -279,8 +280,9 @@ public final class MainActivity extends Activity {
         if (!session.equals(before)) {
             Prefs.setCookie(this, session);
             if (session.isEmpty()) CodeStore.get(this).wipe(); // signed out: no codes stay on this phone
-            else CodeStore.get(this).sync(); // signed in: send codes added here, fetch the rest
         }
+        // Keep the phone's encrypted copy of the QR codes current, for showing them offline.
+        if (!session.isEmpty()) CodeStore.get(this).sync();
         AlertService.sync(this);
     }
 

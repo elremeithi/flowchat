@@ -400,10 +400,6 @@ if (nativeCodes) $('codesOffline').closest('label').hidden = true;
 for (const [id, hash] of [['tabChat', '#chat'], ['tabNotes', '#notes'], ['tabCodes', '#codes']]) {
   $(id).addEventListener('click', (e) => {
     e.preventDefault();
-    if (hash === '#codes' && nativeCodes && !offline) {
-      try { androidApp.openCodes(); } catch (err) { setStatus('Could not open QR codes: ' + err.message, 'down'); }
-      return;
-    }
     if (hash === '#codes' && nativeCodes && offline) { try { androidApp.openCodes(); } catch {} }
     if (location.hash !== hash) location.hash = hash; else route();
   });
@@ -517,12 +513,6 @@ function route() {
   const codeMatch = /^code-([a-f0-9]{32})$/.exec(h);
   let next = h === 'notes' || noteMatch ? 'notes' : h === 'codes' || codeMatch ? 'codes' : 'chat';
   if (offline) next = 'codes';
-  if (nativeCodes && next === 'codes' && !offline) {
-    // Inside the Android app, QR codes have their own screen, stored encrypted on the phone.
-    try { androidApp.openCodes(); } catch {}
-    location.replace(tab === 'notes' ? '#notes' : '#chat');
-    return;
-  }
   if (tab === 'notes' && next !== 'notes') flushNote();
   tab = next;
   $('chatView').hidden = tab !== 'chat';

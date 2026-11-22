@@ -23,9 +23,10 @@ brightness and stays on while a code is shown.
 - **Add a code** by typing the text or link, or by choosing a photo or screenshot.
   A QR code in the picture is read and redrawn sharply. Anything else (barcodes,
   Aztec boarding passes) is kept as the picture itself.
-- **In the Android app** QR codes have their own screen, built into the app: from
-  the QR codes tab (needs server 1.6 or newer), the "Show my QR codes" button when
-  the server is unreachable, or a long press on the app icon. Settings shows the
+- **In the Android app** the QR codes tab shows your codes in the page while the
+  server is reachable. The app also keeps its own encrypted copy, with its own
+  screen for when the server can't be reached: the "Show my QR codes" button then,
+  or a long press on the app icon. Settings shows the
   server and app versions. Codes are stored on the phone encrypted with a key in Android's
   keystore, work with no connection at all, and sync both ways with the server:
   changes made on the phone (also offline) are sent when the server is reachable,
