@@ -37,6 +37,7 @@ public final class SetupActivity extends Activity {
     @Override
     protected void onCreate(Bundle saved) {
         super.onCreate(saved);
+        Secure.apply(this);
         setTitle("Flowchat settings");
         int pad = dp(20);
         LinearLayout col = new LinearLayout(this);

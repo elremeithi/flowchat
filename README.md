@@ -131,7 +131,9 @@ To deliver alerts the app keeps one connection open and shows a silent
 "Flowchat alerts" notification; hide it under Android's notification settings →
 Flowchat → Background connection. On the lock screen alerts show only
 "New Flowchat alert"; the text needs the phone unlocked. The app's data is
-excluded from backups and phone-to-phone transfers.
+excluded from backups and phone-to-phone transfers. Screenshots and screen
+recordings of the app are blocked, its preview in the recent-apps list is blank,
+and it shows as black when the screen is shared or cast.
 
 Build it with `android/build.sh` on Ubuntu/Debian (packages listed at the top
 of the script; it downloads the Android class library from Maven Central on the

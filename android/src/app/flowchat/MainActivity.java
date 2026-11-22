@@ -58,6 +58,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle saved) {
         super.onCreate(saved);
+        Secure.apply(this);
         server = Prefs.server(this);
         if (server.isEmpty()) {
             startActivity(new Intent(this, SetupActivity.class));

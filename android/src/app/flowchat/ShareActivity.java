@@ -37,6 +37,7 @@ public final class ShareActivity extends Activity {
     @Override
     protected void onCreate(Bundle saved) {
         super.onCreate(saved);
+        Secure.apply(this);
         setTitle("Send to Flowchat");
         if (Prefs.server(this).isEmpty() || Prefs.cookie(this).isEmpty()) {
             Toast.makeText(this, "Open Flowchat and sign in first.", Toast.LENGTH_LONG).show();
