@@ -40,7 +40,12 @@
   <nav class="tabs" role="tablist" aria-label="Sections">
     <a id="tabChat" class="tab" role="tab" href="#chat" aria-controls="chatView">Chat<span id="chatDot" class="dot" hidden></span></a>
     <a id="tabNotes" class="tab" role="tab" href="#notes" aria-controls="notesView">Notes</a>
+    <a id="tabCodes" class="tab" role="tab" href="#codes" aria-controls="codesView">QR codes</a>
   </nav>
+  <div id="offlineBar" class="offline-bar" role="status" hidden>
+    <span>No connection to your server. Showing the QR codes saved on this device.</span>
+    <button id="retryBtn" type="button" class="ghost">Try again</button>
+  </div>
 
   <section id="chatView" class="view" role="tabpanel" aria-labelledby="tabChat">
   <div id="scroll" class="scroll">
@@ -103,7 +108,76 @@
       <p>Pick a note on the left, or start a new one.</p>
     </div>
   </section>
+
+  <section id="codesView" class="view codes" role="tabpanel" aria-labelledby="tabCodes" hidden>
+    <div class="codes-scroll">
+      <div class="column codes-column">
+        <div class="codes-tools">
+          <input id="codeSearch" type="search" placeholder="Search codes" aria-label="Search codes" autocomplete="off">
+          <button id="codeAdd" type="button" class="primary">Add code</button>
+        </div>
+        <div id="codeGrid" class="code-grid"></div>
+        <div id="codesEmpty" class="empty codes-empty" hidden>
+          <p><strong>No QR codes yet.</strong></p>
+          <p>Add tickets, Wi-Fi details, links or membership cards, then tap one to show it full screen to another phone or a scanner.</p>
+        </div>
+        <p id="codesNoMatch" class="muted codes-nomatch" hidden>No codes match your search.</p>
+        <label class="offline-pref">
+          <input id="codesOffline" type="checkbox" checked>
+          <span>Keep codes on this device so they can be shown without a connection</span>
+        </label>
+      </div>
+    </div>
+  </section>
 </div>
+
+<div id="codeShow" class="code-show" role="dialog" aria-modal="true" aria-labelledby="showTitle" hidden>
+  <div class="show-top">
+    <a id="showClose" class="show-btn" href="#codes" aria-label="Close">Close</a>
+    <span id="showCount" class="show-count"></span>
+    <button id="showEdit" type="button" class="show-btn">Edit</button>
+  </div>
+  <div class="show-body">
+    <h2 id="showTitle" class="show-title"></h2>
+    <div id="showCode" class="show-code"></div>
+    <p id="showText" class="show-text"></p>
+  </div>
+  <div class="show-nav">
+    <button id="showPrev" type="button" class="show-btn" aria-label="Previous code">‹ Previous</button>
+    <button id="showNext" type="button" class="show-btn" aria-label="Next code">Next ›</button>
+  </div>
+</div>
+
+<dialog id="codeDlg" class="code-dlg">
+  <form id="codeForm" method="dialog">
+    <h2 id="codeDlgTitle">Add a QR code</h2>
+    <label for="codeTitle">Title</label>
+    <input id="codeTitle" type="text" maxlength="100" placeholder="e.g. Gym membership" required autocomplete="off">
+    <div id="codeKind" class="seg" role="radiogroup" aria-label="Source">
+      <button type="button" class="seg-btn" data-kind="text" role="radio">Text or link</button>
+      <button type="button" class="seg-btn" data-kind="image" role="radio">From a picture</button>
+    </div>
+    <div id="codeTextPane">
+      <label for="codeContent">Text or link</label>
+      <textarea id="codeContent" rows="3" placeholder="https://… or any text"></textarea>
+      <p id="codeBytes" class="muted small"></p>
+    </div>
+    <div id="codeImagePane" hidden>
+      <p class="muted small">Pick a photo or screenshot of the code. QR codes are read and redrawn sharply; other codes (barcodes, Aztec tickets) are kept as the picture.</p>
+      <button id="codePick" type="button" class="ghost pick-btn">Choose picture</button>
+      <input id="codeFile" type="file" accept="image/*" hidden>
+    </div>
+    <p id="codeNote" class="muted small" hidden></p>
+    <div id="codePreview" class="code-preview" aria-label="Preview"></div>
+    <p id="codeError" class="error" role="alert" hidden></p>
+    <div class="dlg-row">
+      <button id="codeDelete" type="button" class="danger-ghost" hidden>Remove</button>
+      <span class="grow"></span>
+      <button type="button" id="codeCancel" class="ghost">Cancel</button>
+      <button type="submit" id="codeSave" class="primary">Save</button>
+    </div>
+  </form>
+</dialog>
 
 <dialog id="devicesDlg">
   <h2>Signed-in devices</h2>
@@ -135,6 +209,7 @@
   </form>
 </dialog>
 
+<script src="/vendor/qrcode.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

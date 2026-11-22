@@ -5,9 +5,30 @@ notes, paste links, share files, and pick up where you left off on another devic
 
 - One password, long-lived sign-in per device (90 days by default)
 - Messages and files appear live on every signed-in device
+- Tabs for **Chat**, **Notes** and **QR codes**, all synced live and encrypted on the server
 - Drag and drop, paste, or pick files; images, video and audio preview in place
 - "Devices" lists every signed-in browser and can sign any of them out
 - No database and no npm packages: everything lives in one `/data` folder
+  (two small QR libraries are included in `public/vendor/`; see `THIRD-PARTY.txt` there)
+
+## QR codes
+
+![QR codes tab: list, full-screen code, adding a code, dark mode](docs/qr-codes-preview.png)
+
+Keep tickets, membership cards, Wi-Fi details and links ready to show to another
+phone or a scanner. Tap a code to show it full screen, black on white; swipe or
+use the arrow keys for the next one. In the Android app the screen goes to full
+brightness and stays on while a code is shown.
+
+- **Add a code** by typing the text or link, or by choosing a photo or screenshot.
+  A QR code in the picture is read and redrawn sharply. Anything else (barcodes,
+  Aztec boarding passes) is kept as the picture itself.
+- **Without a connection:** codes are also kept on each device, so they can be
+  shown when the server is out of reach. This works in the Android app, and in
+  browsers when the app is served over HTTPS (browsers only allow offline pages on
+  HTTPS). Untick "Keep codes on this device" to turn it off for a device. Signing
+  out removes the copy. On the device the copy is not encrypted, so keep the
+  phone locked.
 
 ## Install on Unraid
 

@@ -15,6 +15,7 @@ import android.service.notification.StatusBarNotification;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
+import android.view.WindowManager;
 import android.webkit.CookieManager;
 import android.webkit.DownloadListener;
 import android.webkit.JavascriptInterface;
@@ -51,6 +52,8 @@ public final class MainActivity extends Activity {
     private TextView errorText;
     private ValueCallback<Uri[]> fileCallback;
     private String server;
+    /** Loading the copy of the page saved on this phone, because the server could not be reached. */
+    private boolean fromCache;
 
     @Override
     protected void onCreate(Bundle saved) {
@@ -87,6 +90,8 @@ public final class MainActivity extends Activity {
         visible = true;
         String now = Prefs.server(this);
         if (web != null && !now.isEmpty() && !now.equals(server)) {
+            fromCache = false;
+            web.getSettings().setCacheMode(WebSettings.LOAD_DEFAULT);
             server = now; // changed in settings
             errorView.setVisibility(View.GONE);
             web.clearHistory();
@@ -155,7 +160,15 @@ public final class MainActivity extends Activity {
 
             @Override
             public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
-                if (request.isForMainFrame()) showError(String.valueOf(error.getDescription()));
+                if (!request.isForMainFrame()) return;
+                if (!fromCache) {
+                    // Server unreachable: open the saved copy so saved QR codes can still be shown.
+                    fromCache = true;
+                    view.getSettings().setCacheMode(WebSettings.LOAD_CACHE_ONLY);
+                    view.loadUrl(request.getUrl().toString());
+                    return;
+                }
+                showError(String.valueOf(error.getDescription()));
             }
         });
 
@@ -287,6 +300,25 @@ public final class MainActivity extends Activity {
         }
     }
 
+    /** Leaves the saved copy and loads the page from the server again. */
+    private void reconnect() {
+        fromCache = false;
+        errorView.setVisibility(View.GONE);
+        web.getSettings().setCacheMode(WebSettings.LOAD_DEFAULT);
+        String url = web.getUrl();
+        web.loadUrl(url != null && url.startsWith(server) ? url : server + "/");
+    }
+
+    /** Full brightness and screen kept on while a QR code is shown, so scanners can read it. */
+    private void setBright(boolean on) {
+        WindowManager.LayoutParams lp = getWindow().getAttributes();
+        lp.screenBrightness = on ? WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_FULL
+                : WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE;
+        getWindow().setAttributes(lp);
+        if (on) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+    }
+
     // ---------- bridge for the page ----------
 
     final class Bridge {
@@ -308,6 +340,26 @@ public final class MainActivity extends Activity {
                     ? model
                     : maker.substring(0, 1).toUpperCase(Locale.ROOT) + maker.substring(1) + " " + model;
             return name.length() > 40 ? name.substring(0, 40) : name;
+        }
+
+        @JavascriptInterface
+        public void setBright(final boolean on) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    MainActivity.this.setBright(on);
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void reconnect() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    MainActivity.this.reconnect();
+                }
+            });
         }
 
         @JavascriptInterface
@@ -346,8 +398,7 @@ public final class MainActivity extends Activity {
         retry.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View b) {
-                errorView.setVisibility(View.GONE);
-                web.loadUrl(server + "/");
+                reconnect();
             }
         });
         Button settings = new Button(this);

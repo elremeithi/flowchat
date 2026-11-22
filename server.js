@@ -327,6 +327,41 @@ function noteFields(body) {
   return { title, body: text };
 }
 
+// ---------- QR codes ----------
+// A code is either text (shown as a generated QR code) or an image the person imported
+// (a ticket, boarding pass or other barcode that could not be read as a QR code).
+const CODES_FILE = path.join(DATA, 'codes.json');
+const codes = new Map(); // id -> {id, title, kind, content | image, created, updated, by}
+for (const c of readSealed(CODES_FILE, 'codes', [])) codes.set(c.id, c);
+const saveCodes = () => writeSealed(CODES_FILE, 'codes', [...codes.values()]);
+const MAX_CODES = 300;
+const MAX_QR_BYTES = 2331;                 // the most a QR code holds at error correction level M
+const MAX_IMAGE_CHARS = 2 * 1024 * 1024;   // per image, as a data: URL
+const MAX_IMAGES_TOTAL = 40 * 1024 * 1024; // all images together
+const badCode = (message, status = 400) => Object.assign(new Error(message), { status });
+function codeFields(body, existing) {
+  const title = typeof body.title === 'string' ? body.title.replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 100) : '';
+  if (!title) throw badCode('Give the code a title');
+  const kind = existing ? existing.kind : body.kind;
+  if (kind === 'text') {
+    const content = typeof body.content === 'string' ? body.content : existing ? existing.content : '';
+    if (!content.trim()) throw badCode('Enter the text or link the code should hold');
+    if (Buffer.byteLength(content, 'utf8') > MAX_QR_BYTES) throw badCode(`Too long for a QR code (${MAX_QR_BYTES} bytes at most)`, 413);
+    return { title, kind, content };
+  }
+  if (kind === 'image') {
+    if (existing) return { title, kind, image: existing.image };
+    const image = typeof body.image === 'string' ? body.image : '';
+    if (!/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+=*$/.test(image)) throw badCode('The image must be a PNG, JPEG or WebP picture');
+    if (image.length > MAX_IMAGE_CHARS) throw badCode('The image is too large (2 MB at most)', 413);
+    let total = image.length;
+    for (const c of codes.values()) if (c.image) total += c.image.length;
+    if (total > MAX_IMAGES_TOTAL) throw badCode('Storage for code images is full (40 MB). Remove some image codes first.', 413);
+    return { title, kind, image };
+  }
+  throw badCode('Unknown kind of code');
+}
+
 // ---------- sessions ----------
 const sessions = new Map(); // sha256(token) hex -> {id, device, created, seen}
 // Sessions are tied to the current password lock: changing the password signs every device out.
@@ -433,6 +468,9 @@ const STATIC = {
   '/style.css': ['style.css', 'text/css; charset=utf-8'],
   '/icon.svg': ['icon.svg', 'image/svg+xml'],
   '/manifest.webmanifest': ['manifest.webmanifest', 'application/manifest+json'],
+  '/sw.js': ['sw.js', 'text/javascript; charset=utf-8'],
+  '/vendor/qrcode.js': ['vendor/qrcode.js', 'text/javascript; charset=utf-8'],
+  '/vendor/jsQR.js': ['vendor/jsQR.js', 'text/javascript; charset=utf-8'],
 };
 const PAGE_CSP = "default-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
 
@@ -707,6 +745,30 @@ async function handle(req, res) {
   }
   if ((mm = /^\/api\/notes\/([a-f0-9]{32})$/.exec(p)) && method === 'DELETE') {
     if (notes.delete(mm[1])) { saveNotes(); broadcast('noteDelete', { id: mm[1] }); }
+    return json(res, 200, { ok: true });
+  }
+  if (p === '/api/codes' && method === 'GET') {
+    return json(res, 200, { codes: [...codes.values()] });
+  }
+  if (p === '/api/codes' && method === 'POST') {
+    if (codes.size >= MAX_CODES) return json(res, 400, { error: `Limit of ${MAX_CODES} codes reached. Remove some first.` });
+    const f = codeFields(await readJson(req, 3 * 1024 * 1024));
+    const now = Date.now();
+    const c = { id: newId(), ...f, created: now, updated: now, by: sess.device };
+    codes.set(c.id, c); saveCodes();
+    broadcast('code', c);
+    return json(res, 201, c);
+  }
+  if ((mm = /^\/api\/codes\/([a-f0-9]{32})$/.exec(p)) && method === 'PUT') {
+    const c = codes.get(mm[1]);
+    if (!c) return json(res, 404, { error: 'This code was removed on another device' });
+    Object.assign(c, codeFields(await readJson(req, 64 * 1024), c), { updated: Math.max(Date.now(), c.updated + 1), by: sess.device });
+    saveCodes();
+    broadcast('code', c);
+    return json(res, 200, c);
+  }
+  if ((mm = /^\/api\/codes\/([a-f0-9]{32})$/.exec(p)) && method === 'DELETE') {
+    if (codes.delete(mm[1])) { saveCodes(); broadcast('codeDelete', { id: mm[1] }); }
     return json(res, 200, { ok: true });
   }
   if (p === '/api/sessions' && method === 'GET') {

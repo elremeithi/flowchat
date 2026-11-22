@@ -56,6 +56,7 @@ function showLogin() {
   msgs = []; $('list').textContent = '';
   notes = []; openId = null; dirty = false; clearTimeout(saveTimer);
   $('noteList').textContent = ''; $('noteTitle').value = ''; $('noteBody').value = '';
+  codes = []; $('codeGrid').textContent = ''; hideCode(); forgetCodeCache();
   $('app').hidden = true;
   $('login').hidden = false;
   $('device').value = stored('flow_device') || guessDevice();
@@ -260,7 +261,7 @@ function connect() {
   events = new EventSource('/api/events');
   events.onopen = () => {
     setStatus(`Synced · ${me.device}`, 'live');
-    if (!first) { loadLatest().catch(() => {}); loadNotes().catch(() => {}); }
+    if (!first) { loadLatest().catch(() => {}); loadNotes().catch(() => {}); loadCodes().catch(() => {}); }
     first = false;
   };
   events.onerror = async () => {
@@ -286,6 +287,8 @@ function connect() {
   });
   events.addEventListener('note', (e) => noteChanged(JSON.parse(e.data)));
   events.addEventListener('noteDelete', (e) => noteRemoved(JSON.parse(e.data).id));
+  events.addEventListener('code', (e) => codeChanged(JSON.parse(e.data)));
+  events.addEventListener('codeDelete', (e) => codeRemoved(JSON.parse(e.data).id));
 }
 
 // ---------- sending ----------
@@ -463,14 +466,21 @@ let tab = 'chat';
 function route() {
   const h = location.hash.slice(1);
   const noteMatch = /^note-([a-f0-9]{32})$/.exec(h);
-  const next = h === 'notes' || noteMatch ? 'notes' : 'chat';
+  const codeMatch = /^code-([a-f0-9]{32})$/.exec(h);
+  let next = h === 'notes' || noteMatch ? 'notes' : h === 'codes' || codeMatch ? 'codes' : 'chat';
+  if (offline) next = 'codes';
   if (tab === 'notes' && next !== 'notes') flushNote();
   tab = next;
   $('chatView').hidden = tab !== 'chat';
   $('notesView').hidden = tab !== 'notes';
+  $('codesView').hidden = tab !== 'codes';
   $('tabChat').setAttribute('aria-selected', tab === 'chat');
   $('tabNotes').setAttribute('aria-selected', tab === 'notes');
-  if (tab === 'chat') {
+  $('tabCodes').setAttribute('aria-selected', tab === 'codes');
+  if (codeMatch) showCode(codeMatch[1]); else hideCode();
+  if (tab === 'codes') {
+    renderCodes();
+  } else if (tab === 'chat') {
     $('chatDot').hidden = true;
     if (nearBottom()) toBottom();
   } else if (noteMatch) {
@@ -662,14 +672,361 @@ $('noteDelete').addEventListener('click', () => {
   });
 });
 
+// ---------- QR codes ----------
+let codes = [];        // sorted by title
+let offline = false;   // started without a connection: showing the copy saved on this device
+const qrCache = new Map();
+qrcode.stringToBytes = qrcode.stringToBytesFuncs['UTF-8'];
+const QR_MAX_BYTES = 2331;
+const byTitle = (a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base', numeric: true });
+
+// Builds an SVG QR code (error correction M, 4-module quiet zone) as a string of numbers only.
+function qrSvg(textContent) {
+  if (qrCache.has(textContent)) return qrCache.get(textContent);
+  const qr = qrcode(0, 'M');
+  qr.addData(textContent, 'Byte');
+  qr.make();
+  const n = qr.getModuleCount(), q = 4, size = n + 2 * q;
+  let d = '';
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (qr.isDark(r, c)) d += `M${c + q} ${r + q}h1v1h-1z`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" shape-rendering="crispEdges" role="img" aria-label="QR code"><rect width="${size}" height="${size}" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;
+  if (qrCache.size > 400) qrCache.clear();
+  qrCache.set(textContent, svg);
+  return svg;
+}
+function codeVisual(c) {
+  if (c.kind === 'image') {
+    const img = el('img');
+    img.src = c.image;
+    img.alt = c.title;
+    return img;
+  }
+  const box = el('div');
+  box.innerHTML = qrSvg(c.content); // generated above from numbers only, never from the content's text
+  return box.firstChild;
+}
+const codeSummary = (c) => (c.kind === 'image' ? 'Picture' : c.content.replace(/\s+/g, ' ').slice(0, 60));
+
+function renderCodes() {
+  const q = $('codeSearch').value.trim().toLowerCase();
+  const shown = q ? codes.filter((c) => (c.title + ' ' + (c.content || '')).toLowerCase().includes(q)) : codes;
+  const grid = $('codeGrid');
+  grid.textContent = '';
+  for (const c of shown) {
+    const a = el('a', 'code-card');
+    a.href = `#code-${c.id}`;
+    const thumb = el('span', 'code-thumb');
+    try { thumb.append(codeVisual(c)); } catch { thumb.textContent = '?'; }
+    a.append(thumb, el('strong', null, c.title), el('span', 'sub', codeSummary(c)));
+    grid.append(a);
+  }
+  $('codesEmpty').hidden = codes.length > 0;
+  $('codesNoMatch').hidden = !(codes.length && !shown.length);
+  $('codeAdd').hidden = offline;
+}
+$('codeSearch').addEventListener('input', renderCodes);
+
+async function loadCodes() {
+  const data = await api('GET', '/api/codes');
+  codes = data.codes.sort(byTitle);
+  saveCodeCache();
+  if (tab === 'codes') renderCodes();
+  if (showing) {
+    if (codes.some((c) => c.id === showing)) showCode(showing, true);
+    else location.replace('#codes');
+  }
+}
+function codeChanged(c) {
+  codes = codes.filter((x) => x.id !== c.id).concat(c).sort(byTitle);
+  saveCodeCache();
+  if (tab === 'codes') renderCodes();
+  if (showing === c.id) showCode(c.id, true);
+}
+function codeRemoved(id) {
+  codes = codes.filter((x) => x.id !== id);
+  saveCodeCache();
+  if (tab === 'codes') renderCodes();
+  if (showing === id) location.replace('#codes');
+}
+
+// ----- the copy kept on this device, for showing codes without a connection -----
+function offlineWanted() { return stored('flow_codes_offline') !== '0'; }
+function forgetCodeCache() { try { localStorage.removeItem('flow_codes'); } catch {} }
+function saveCodeCache() {
+  if (!offlineWanted()) return forgetCodeCache();
+  try { localStorage.setItem('flow_codes', JSON.stringify(codes)); }
+  catch {
+    // Too big for the browser's storage: keep the text codes at least.
+    try { localStorage.setItem('flow_codes', JSON.stringify(codes.filter((c) => c.kind === 'text'))); } catch {}
+  }
+}
+function cachedCodes() {
+  try { return (JSON.parse(localStorage.getItem('flow_codes')) || []).sort(byTitle); } catch { return []; }
+}
+$('codesOffline').checked = offlineWanted();
+$('codesOffline').addEventListener('change', (e) => {
+  stored('flow_codes_offline', e.target.checked ? '1' : '0');
+  saveCodeCache();
+});
+
+// ----- showing a code full screen -----
+let showing = null;
+let wakeLock = null;
+function brighten(on) {
+  try { if (androidApp && androidApp.setBright) androidApp.setBright(on); } catch {}
+  if (on && !wakeLock && navigator.wakeLock) {
+    navigator.wakeLock.request('screen').then((l) => { wakeLock = l; l.addEventListener('release', () => { wakeLock = null; }); }).catch(() => {});
+  } else if (!on && wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+}
+document.addEventListener('visibilitychange', () => { if (showing && document.visibilityState === 'visible') brighten(true); });
+
+function showCode(id, refresh) {
+  const i = codes.findIndex((c) => c.id === id);
+  if (i < 0) { if (me) location.replace('#codes'); return; }
+  const c = codes[i];
+  if (showing === id && !refresh) return;
+  showing = id;
+  $('showTitle').textContent = c.title;
+  const box = $('showCode');
+  box.textContent = '';
+  box.classList.toggle('image', c.kind === 'image');
+  try { box.append(codeVisual(c)); } catch { box.textContent = 'This code could not be drawn.'; }
+  $('showText').textContent = c.kind === 'text' ? c.content : '';
+  $('showText').hidden = c.kind !== 'text';
+  $('showCount').textContent = codes.length > 1 ? `${i + 1} of ${codes.length}` : '';
+  $('showPrev').disabled = i === 0;
+  $('showNext').disabled = i === codes.length - 1;
+  $('showEdit').hidden = offline;
+  if ($('codeShow').hidden) {
+    $('codeShow').hidden = false;
+    brighten(true);
+    $('showClose').focus();
+  }
+}
+function hideCode() {
+  if (!showing && $('codeShow').hidden) return;
+  showing = null;
+  $('codeShow').hidden = true;
+  brighten(false);
+}
+function stepCode(dir) {
+  const i = codes.findIndex((c) => c.id === showing);
+  const next = codes[i + dir];
+  if (next) location.replace(`#code-${next.id}`);
+}
+$('showPrev').addEventListener('click', () => stepCode(-1));
+$('showNext').addEventListener('click', () => stepCode(1));
+$('showEdit').addEventListener('click', () => {
+  const c = codes.find((x) => x.id === showing);
+  if (c) openCodeDialog(c);
+});
+addEventListener('keydown', (e) => {
+  if (!showing || $('codeDlg').open) return;
+  if (e.key === 'ArrowLeft') stepCode(-1);
+  else if (e.key === 'ArrowRight') stepCode(1);
+  else if (e.key === 'Escape') location.hash = '#codes';
+});
+let swipeX = null;
+$('codeShow').addEventListener('pointerdown', (e) => { swipeX = e.clientX; });
+$('codeShow').addEventListener('pointerup', (e) => {
+  if (swipeX === null) return;
+  const dx = e.clientX - swipeX;
+  swipeX = null;
+  if (Math.abs(dx) > 60) stepCode(dx < 0 ? 1 : -1);
+});
+
+// ----- adding and editing -----
+let editing = null;     // code being edited, or null for a new one
+let codeKind = 'text';
+let pendingImage = '';  // data: URL of a picture kept as is
+function setKind(kind) {
+  codeKind = kind;
+  for (const b of $('codeKind').querySelectorAll('.seg-btn')) b.setAttribute('aria-checked', b.dataset.kind === kind);
+  $('codeTextPane').hidden = kind !== 'text';
+  $('codeImagePane').hidden = kind !== 'image' || !!editing;
+  updatePreview();
+}
+function updatePreview() {
+  const box = $('codePreview');
+  box.textContent = '';
+  const bytes = new TextEncoder().encode($('codeContent').value).length;
+  $('codeBytes').textContent = codeKind === 'text' && bytes ? `${bytes} of ${QR_MAX_BYTES} bytes` : '';
+  $('codeBytes').classList.toggle('error', bytes > QR_MAX_BYTES);
+  try {
+    if (codeKind === 'text' && $('codeContent').value.trim() && bytes <= QR_MAX_BYTES) box.innerHTML = qrSvg($('codeContent').value);
+    else if (codeKind === 'image' && (pendingImage || (editing && editing.image))) {
+      const img = el('img'); img.src = pendingImage || editing.image; img.alt = 'Picture of the code'; box.append(img);
+    }
+  } catch {}
+}
+let previewTimer = null;
+$('codeContent').addEventListener('input', () => { clearTimeout(previewTimer); previewTimer = setTimeout(updatePreview, 150); });
+for (const b of $('codeKind').querySelectorAll('.seg-btn')) {
+  b.addEventListener('click', () => { if (!editing) { $('codeNote').hidden = true; setKind(b.dataset.kind); } });
+}
+function openCodeDialog(c) {
+  editing = c || null;
+  pendingImage = '';
+  $('codeDlgTitle').textContent = c ? 'Edit code' : 'Add a QR code';
+  $('codeTitle').value = c ? c.title : '';
+  $('codeContent').value = c && c.kind === 'text' ? c.content : '';
+  $('codeError').hidden = true;
+  $('codeNote').hidden = true;
+  $('codeDelete').hidden = !c;
+  $('codeKind').hidden = !!c;
+  setKind(c ? c.kind : 'text');
+  $('codeDlg').showModal();
+  if (!c) $('codeTitle').focus();
+}
+$('codeAdd').addEventListener('click', () => openCodeDialog(null));
+$('codeCancel').addEventListener('click', () => $('codeDlg').close());
+$('codePick').addEventListener('click', () => $('codeFile').click());
+$('codeFile').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  const note = $('codeNote');
+  note.hidden = false;
+  note.textContent = 'Reading the picture…';
+  try {
+    const found = await readPicture(file);
+    if (found.text) {
+      $('codeContent').value = found.text;
+      setKind('text');
+      note.textContent = 'QR code found in the picture. It will be redrawn sharply; you can check the text below.';
+    } else {
+      pendingImage = found.image;
+      setKind('image');
+      note.textContent = 'No QR code found, so the picture itself will be shown. That works for barcodes and tickets too.';
+    }
+    if (!$('codeTitle').value.trim()) $('codeTitle').value = file.name.replace(/\.[a-z0-9]+$/i, '').slice(0, 100);
+  } catch (err) {
+    note.textContent = err.message;
+  }
+});
+
+let jsQRLoading = null;
+function loadReader() {
+  if (window.jsQR) return Promise.resolve();
+  if (!jsQRLoading) {
+    jsQRLoading = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = '/vendor/jsQR.js';
+      s.onload = resolve;
+      s.onerror = () => { jsQRLoading = null; reject(new Error('Could not load the QR reader. Check the connection.')); };
+      document.head.append(s);
+    });
+  }
+  return jsQRLoading;
+}
+function loadImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => resolve({ img, done: () => URL.revokeObjectURL(url) });
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('That file is not a picture this browser can open.')); };
+    img.src = url;
+  });
+}
+function drawScaled(img, longest) {
+  const scale = Math.min(1, longest / Math.max(img.naturalWidth, img.naturalHeight));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  return { canvas, ctx };
+}
+// Returns {text} when a QR code is found, otherwise {image} (a resized copy to keep as is).
+async function readPicture(file) {
+  const [{ img, done }] = await Promise.all([loadImage(file), loadReader()]);
+  try {
+    for (const size of [1600, 800, 2400]) {
+      const { canvas, ctx } = drawScaled(img, size);
+      const px = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const hit = window.jsQR(px.data, canvas.width, canvas.height, { inversionAttempts: 'attemptBoth' });
+      if (hit && hit.data) return { text: hit.data };
+    }
+    let { canvas } = drawScaled(img, 1400);
+    let image = canvas.toDataURL('image/png');
+    if (image.length > 1.5e6) image = canvas.toDataURL('image/jpeg', 0.9);
+    if (image.length > 1.9e6) image = drawScaled(img, 1000).canvas.toDataURL('image/jpeg', 0.85);
+    return { image };
+  } finally { done(); }
+}
+
+$('codeForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const err = $('codeError');
+  err.hidden = true;
+  const body = { title: $('codeTitle').value };
+  if (!editing) {
+    body.kind = codeKind;
+    if (codeKind === 'image') {
+      if (!pendingImage) { err.textContent = 'Choose a picture first.'; err.hidden = false; return; }
+      body.image = pendingImage;
+    }
+  }
+  if (codeKind === 'text') body.content = $('codeContent').value;
+  $('codeSave').disabled = true;
+  try {
+    const c = editing ? await api('PUT', `/api/codes/${editing.id}`, body) : await api('POST', '/api/codes', body);
+    codeChanged(c);
+    $('codeDlg').close();
+    if (!editing) location.hash = `#code-${c.id}`;
+  } catch (ex) {
+    err.textContent = ex.message;
+    err.hidden = false;
+  } finally {
+    $('codeSave').disabled = false;
+  }
+});
+$('codeDelete').addEventListener('click', () => {
+  const c = editing;
+  if (!c) return;
+  $('codeDlg').close();
+  confirmAction(`Remove "${c.title}" from every device?`, async () => {
+    try { await api('DELETE', `/api/codes/${c.id}`); codeRemoved(c.id); }
+    catch (ex) { setStatus(ex.message, 'down'); }
+  });
+});
+
+// ----- starting without a connection -----
+function startOffline() {
+  offline = true;
+  me = null;
+  codes = cachedCodes();
+  $('login').hidden = true;
+  $('app').hidden = false;
+  $('app').classList.add('offline');
+  $('offlineBar').hidden = false;
+  $('codesOffline').closest('label').hidden = true;
+  setStatus('Offline', 'down');
+  if (!/^#code-/.test(location.hash)) location.replace('#codes');
+  route();
+}
+$('retryBtn').addEventListener('click', () => {
+  try { if (androidApp && androidApp.reconnect) { androidApp.reconnect(); return; } } catch {}
+  location.reload();
+});
+if ('serviceWorker' in navigator) {
+  addEventListener('load', () => { navigator.serviceWorker.register('/sw.js').catch(() => {}); });
+}
+
 // ---------- boot ----------
 async function start() {
-  try { me = await api('GET', '/api/me'); } catch { return; }
+  try { me = await api('GET', '/api/me'); }
+  catch (e) {
+    if (e instanceof TypeError) startOffline(); // the server could not be reached at all
+    return;
+  }
   $('login').hidden = true;
   $('app').hidden = false;
   text.value = stored('flow_draft') || '';
   autosize();
-  await Promise.all([loadLatest(), loadNotes()]);
+  await Promise.all([loadLatest(), loadNotes(), loadCodes()]);
   connect();
   route();
   if (tab === 'chat' && !matchMedia('(pointer: coarse)').matches) text.focus();
