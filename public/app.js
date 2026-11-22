@@ -405,8 +405,8 @@ for (const [id, hash] of [['tabChat', '#chat'], ['tabNotes', '#notes'], ['tabCod
     if (location.hash !== hash) location.hash = hash; else route();
   });
 }
-// Swiping left or right on a touch screen moves between Chat, Notes and QR codes.
-const TAB_ORDER = ['chat', 'notes', 'codes'];
+// Swiping left or right on a touch screen moves between Notes, Chat and QR codes.
+const TAB_ORDER = ['notes', 'chat', 'codes'];
 const VIEW_OF = { chat: 'chatView', notes: 'notesView', codes: 'codesView' };
 let swipe = null;
 function scrollsSideways(el) {
@@ -1141,6 +1141,9 @@ async function start() {
   autosize();
   await Promise.all([loadLatest(), loadNotes(), loadCodes()]);
   connect();
+  // Always open on Chat, even when the browser or the app restores the last section's address.
+  // Links straight to one note or code still open it.
+  if (!/^#(note|code)-/.test(location.hash) && location.hash !== '#chat') history.replaceState(null, '', '#chat');
   route();
   if (tab === 'chat' && !matchMedia('(pointer: coarse)').matches) text.focus();
 }
