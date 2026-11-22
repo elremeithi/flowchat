@@ -394,12 +394,18 @@ addEventListener('drop', (e) => {
 });
 
 // ---------- devices ----------
-if (nativeCodes) {
-  $('codesOffline').closest('label').hidden = true;
-  // Open the app's QR codes screen straight from the tap, without going through the page's routing.
-  $('tabCodes').addEventListener('click', (e) => {
+if (nativeCodes) $('codesOffline').closest('label').hidden = true;
+// Tabs switch in script on every tap, instead of relying on the browser to follow the link:
+// some Android WebViews intercept same-page links and nothing happens.
+for (const [id, hash] of [['tabChat', '#chat'], ['tabNotes', '#notes'], ['tabCodes', '#codes']]) {
+  $(id).addEventListener('click', (e) => {
     e.preventDefault();
-    try { androidApp.openCodes(); } catch (err) { setStatus('Could not open QR codes: ' + err.message, 'down'); }
+    if (hash === '#codes' && nativeCodes && !offline) {
+      try { androidApp.openCodes(); } catch (err) { setStatus('Could not open QR codes: ' + err.message, 'down'); }
+      return;
+    }
+    if (hash === '#codes' && nativeCodes && offline) { try { androidApp.openCodes(); } catch {} }
+    if (location.hash !== hash) location.hash = hash; else route();
   });
 }
 if (androidApp) {
@@ -408,6 +414,8 @@ if (androidApp) {
 }
 $('devicesBtn').addEventListener('click', async () => {
   $('hookResult').hidden = true; $('hookError').hidden = true;
+  $('versionLine').textContent = `Server version ${me.version || 'older than 1.6: update it to get every feature'}`
+    + (androidApp && androidApp.appVersion ? ` · App version ${androidApp.appVersion()}` : '');
   await Promise.all([renderDevices(), renderHooks(), renderTrash()]);
   $('devicesDlg').showModal();
 });

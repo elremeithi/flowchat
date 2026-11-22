@@ -21,6 +21,8 @@ const REQUIRE_HTTPS = process.env.REQUIRE_HTTPS === '1';
 const ALLOWED_HOSTS = (process.env.ALLOWED_HOSTS || '').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
 const RETENTION_MS = (Number(process.env.RETENTION_DAYS) || 0) * 86400e3;
 const PUBLIC = path.join(__dirname, 'public');
+// Shown in Settings (browser and app) so it is easy to tell whether a server is up to date.
+const SERVER_VERSION = '1.6';
 
 // `node server.js --totp-new` prints a fresh two-step sign-in secret and exits.
 if (process.argv.includes('--totp-new')) {
@@ -631,7 +633,7 @@ async function handle(req, res) {
     try { origin = new URL(req.headers.origin).host; } catch {}
     if (origin !== req.headers.host) return json(res, 403, { error: 'Cross-site request refused' });
   }
-  if (p === '/api/config' && method === 'GET') return json(res, 200, { totp: !!TOTP_KEY });
+  if (p === '/api/config' && method === 'GET') return json(res, 200, { totp: !!TOTP_KEY, version: SERVER_VERSION });
 
   if (p === '/api/login' && method === 'POST') {
     const ip = clientIp(req);
@@ -669,7 +671,7 @@ async function handle(req, res) {
     return json(res, 200, { ok: true }, { 'Set-Cookie': cookieHeader(req, 'x', 0), 'Clear-Site-Data': '"cache", "storage"' });
   }
   if (p === '/api/me' && method === 'GET') {
-    return json(res, 200, { device: sess.device, sid: sess.id, maxUploadMb: MAX_UPLOAD_MB });
+    return json(res, 200, { device: sess.device, sid: sess.id, maxUploadMb: MAX_UPLOAD_MB, version: SERVER_VERSION });
   }
   if (p === '/api/messages' && method === 'GET') {
     const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 100, 1), 500);

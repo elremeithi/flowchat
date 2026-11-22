@@ -52,8 +52,6 @@ public final class MainActivity extends Activity {
     private TextView errorText;
     private ValueCallback<Uri[]> fileCallback;
     private String server;
-    /** Shown when the server's page has no QR codes tab of its own (older servers). */
-    private View codesBar;
     /** Loading the copy of the page saved on this phone, because the server could not be reached. */
     private boolean fromCache;
 
@@ -77,12 +75,7 @@ public final class MainActivity extends Activity {
         frame.addView(web, new FrameLayout.LayoutParams(-1, -1));
         errorView = buildErrorView();
         frame.addView(errorView, new FrameLayout.LayoutParams(-1, -1));
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.addView(frame, new LinearLayout.LayoutParams(-1, 0, 1));
-        codesBar = buildCodesBar();
-        root.addView(codesBar);
-        setContentView(root);
+        setContentView(frame);
 
         setUpWebView();
         if (saved == null || web.restoreState(saved) == null) web.loadUrl(server + "/");
@@ -369,15 +362,18 @@ public final class MainActivity extends Activity {
             });
         }
 
-        /** The page has its own QR codes tab, which opens the app's screen: hide the app's bar. */
+        /** The page has its own QR codes tab, which opens the app's screen. Kept for the page's check. */
         @JavascriptInterface
         public void pageHasCodes() {
-            runOnUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    codesBar.setVisibility(View.GONE);
-                }
-            });
+        }
+
+        @JavascriptInterface
+        public String appVersion() {
+            try {
+                return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+            } catch (Exception e) {
+                return "";
+            }
         }
 
         @JavascriptInterface
@@ -471,23 +467,6 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private View buildCodesBar() {
-        LinearLayout bar = new LinearLayout(this);
-        bar.setGravity(Gravity.CENTER);
-        bar.setBackgroundColor(themeColor(android.R.attr.colorBackground));
-        bar.setElevation(dp(4));
-        Button codes = new Button(this, null, android.R.attr.borderlessButtonStyle);
-        codes.setText("QR codes");
-        codes.setAllCaps(false);
-        codes.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View b) {
-                openCodes();
-            }
-        });
-        bar.addView(codes, new LinearLayout.LayoutParams(-1, -2));
-        return bar;
-    }
 
     private void showError(String why) {
         errorText.setText(server + "\n" + why + "\n\nCheck that the server is running and that this phone can reach it "

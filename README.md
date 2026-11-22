@@ -24,9 +24,9 @@ brightness and stays on while a code is shown.
   A QR code in the picture is read and redrawn sharply. Anything else (barcodes,
   Aztec boarding passes) is kept as the picture itself.
 - **In the Android app** QR codes have their own screen, built into the app: from
-  the QR codes tab, the "QR codes" bar (servers older than this feature), the
-  "Show my QR codes" button when the server is unreachable, or a long press on the
-  app icon. Codes are stored on the phone encrypted with a key in Android's
+  the QR codes tab (needs server 1.6 or newer), the "Show my QR codes" button when
+  the server is unreachable, or a long press on the app icon. Settings shows the
+  server and app versions. Codes are stored on the phone encrypted with a key in Android's
   keystore, work with no connection at all, and sync both ways with the server:
   changes made on the phone (also offline) are sent when the server is reachable,
   and changes made in a browser arrive on the phone. If the same code is changed in

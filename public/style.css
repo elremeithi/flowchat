@@ -241,3 +241,5 @@ dialog form { display: flex; justify-content: flex-end; margin-top: 16px; }
 @media (max-width: 480px) { .tab { padding-inline: 12px; } }
 .code-dlg .dlg-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 #codeTextPane, #codeImagePane { display: flex; flex-direction: column; gap: 6px; }
+
+.version-line { margin-top: 18px; }
