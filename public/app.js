@@ -405,6 +405,68 @@ for (const [id, hash] of [['tabChat', '#chat'], ['tabNotes', '#notes'], ['tabCod
     if (location.hash !== hash) location.hash = hash; else route();
   });
 }
+// Swiping left or right on a touch screen moves between Chat, Notes and QR codes.
+const TAB_ORDER = ['chat', 'notes', 'codes'];
+const VIEW_OF = { chat: 'chatView', notes: 'notesView', codes: 'codesView' };
+let swipe = null;
+function scrollsSideways(el) {
+  for (; el && el !== document.body; el = el.parentElement) {
+    const ox = getComputedStyle(el).overflowX;
+    if ((ox === 'auto' || ox === 'scroll') && el.scrollWidth > el.clientWidth + 1) return true;
+  }
+  return false;
+}
+function swipeAllowed(target) {
+  if (offline || showing || document.querySelector('dialog[open]')) return false;
+  if (target.closest('input, textarea, select, [contenteditable="true"], .tabs')) return false;
+  return !scrollsSideways(target);
+}
+function dragView(dx, animate) {
+  const v = $(VIEW_OF[tab]);
+  v.style.transition = animate ? 'transform .18s ease-out, opacity .18s ease-out' : 'none';
+  v.style.transform = dx ? `translateX(${dx}px)` : '';
+  v.style.opacity = dx ? String(Math.max(0.4, 1 - Math.abs(dx) / innerWidth)) : '';
+}
+$('app').addEventListener('touchstart', (e) => {
+  swipe = null;
+  if (e.touches.length !== 1) return;
+  const t = e.touches[0];
+  // Leave the screen edges to the phone's own back gesture.
+  if (t.clientX < 24 || t.clientX > innerWidth - 24) return;
+  if (!swipeAllowed(e.target)) return;
+  swipe = { x: t.clientX, y: t.clientY, at: Date.now(), dir: 0 };
+}, { passive: true });
+$('app').addEventListener('touchmove', (e) => {
+  if (!swipe) return;
+  const t = e.touches[0];
+  const dx = t.clientX - swipe.x, dy = t.clientY - swipe.y;
+  if (!swipe.dir) {
+    if (Math.abs(dx) < 12 && Math.abs(dy) < 12) return;
+    if (Math.abs(dy) >= Math.abs(dx)) { swipe = null; return; } // scrolling up or down
+    swipe.dir = 1;
+  }
+  const i = TAB_ORDER.indexOf(tab);
+  const edge = (dx > 0 && i === 0) || (dx < 0 && i === TAB_ORDER.length - 1);
+  dragView(edge ? dx / 4 : dx / 2, false); // resist at the first and last section
+}, { passive: true });
+function endSwipe(e) {
+  if (!swipe) return;
+  const s = swipe; swipe = null;
+  if (!s.dir) return;
+  const t = e.changedTouches[0];
+  const dx = t ? t.clientX - s.x : 0;
+  const quick = Date.now() - s.at < 400 && Math.abs(dx) > 40;
+  const i = TAB_ORDER.indexOf(tab);
+  const to = (quick || Math.abs(dx) > innerWidth / 4) ? i + (dx < 0 ? 1 : -1) : i;
+  dragView(0, true);
+  if (to !== i && to >= 0 && to < TAB_ORDER.length) {
+    const hash = '#' + TAB_ORDER[to];
+    if (location.hash !== hash) location.hash = hash; else route();
+  }
+}
+$('app').addEventListener('touchend', endSwipe);
+$('app').addEventListener('touchcancel', () => { if (swipe) { swipe = null; dragView(0, true); } });
+
 if (androidApp) {
   $('appSettingsBtn').hidden = false;
   $('appSettingsBtn').addEventListener('click', () => { try { androidApp.openAppSettings(); } catch {} });

@@ -239,6 +239,18 @@ dialog form { display: flex; justify-content: flex-end; margin-top: 16px; }
 .danger-ghost { color: var(--danger); }
 .danger-ghost:hover { background: var(--surface-2); }
 @media (max-width: 480px) { .tab { padding-inline: 12px; } }
+.app { overflow-x: hidden; }
+/* Touch screens switch sections by swiping, so the tabs shrink to a small position indicator:
+   the current section's name in a pill, the others as dots (still tappable). */
+@media (pointer: coarse) {
+  .tabs { justify-content: center; align-items: center; gap: 8px; padding-block: 6px; }
+  .tab { padding: 0; border: 0; margin: 0; min-width: 24px; min-height: 24px; justify-content: center; font-size: 0; }
+  .tab::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); opacity: .45; }
+  .tab .dot { position: absolute; top: 2px; right: 2px; width: 6px; height: 6px; }
+  .tab[aria-selected="true"] { font-size: 13px; padding: 3px 12px; border-radius: 999px; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  .tab[aria-selected="true"]::before { display: none; }
+  .tab[aria-selected="true"] .dot { display: none; }
+}
 .code-dlg .dlg-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 #codeTextPane, #codeImagePane { display: flex; flex-direction: column; gap: 6px; }
 
