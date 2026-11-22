@@ -22,7 +22,7 @@ const ALLOWED_HOSTS = (process.env.ALLOWED_HOSTS || '').split(',').map((h) => h.
 const RETENTION_MS = (Number(process.env.RETENTION_DAYS) || 0) * 86400e3;
 const PUBLIC = path.join(__dirname, 'public');
 // Shown in Settings (browser and app) so it is easy to tell whether a server is up to date.
-const SERVER_VERSION = '1.8.0';
+const SERVER_VERSION = '1.8.1';
 
 // `node server.js --totp-new` prints a fresh two-step sign-in secret and exits.
 if (process.argv.includes('--totp-new')) {
@@ -485,6 +485,25 @@ const STATIC = {
   '/vendor/qrcode.js': ['vendor/qrcode.js', 'text/javascript; charset=utf-8'],
   '/vendor/jsQR.js': ['vendor/jsQR.js', 'text/javascript; charset=utf-8'],
 };
+// The page links its scripts and styles with a fingerprint of their contents (/app.js?v=…), so
+// a browser, the Android app's web view or a caching proxy in front never keeps using an old
+// copy after an update. Built once: the files don't change while the server runs.
+let pageHtml = null;
+async function indexPage() {
+  if (pageHtml) return pageHtml;
+  const html = await fsp.readFile(path.join(PUBLIC, 'index.html'), 'utf8');
+  const tagged = [];
+  for (const m of html.matchAll(/(?:href|src)="(\/[^"?#]+\.(?:js|css))"/g)) {
+    if (!STATIC[m[1]] || tagged.some((t) => t[0] === m[1])) continue;
+    const body = await fsp.readFile(path.join(PUBLIC, STATIC[m[1]][0]));
+    tagged.push([m[1], sha(body).toString('hex').slice(0, 12)]);
+  }
+  pageHtml = html.replace(/((?:href|src)=")(\/[^"?#]+\.(?:js|css))"/g, (all, attr, url) => {
+    const t = tagged.find((x) => x[0] === url);
+    return t ? `${attr}${url}?v=${t[1]}"` : all;
+  });
+  return pageHtml;
+}
 const PAGE_CSP = "default-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
 
 // Types a browser may display in place. Everything else downloads.
@@ -583,7 +602,7 @@ async function handle(req, res) {
 
   if ((method === 'GET' || method === 'HEAD') && STATIC[p]) {
     const [file, type] = STATIC[p];
-    const body = await fsp.readFile(path.join(PUBLIC, file));
+    const body = file === 'index.html' ? await indexPage() : await fsp.readFile(path.join(PUBLIC, file));
     res.writeHead(200, { ...BASE_HEADERS, 'Content-Type': type, 'Cache-Control': 'no-cache', 'Content-Security-Policy': PAGE_CSP });
     return res.end(method === 'HEAD' ? undefined : body);
   }
