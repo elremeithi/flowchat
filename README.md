@@ -23,12 +23,21 @@ brightness and stays on while a code is shown.
 - **Add a code** by typing the text or link, or by choosing a photo or screenshot.
   A QR code in the picture is read and redrawn sharply. Anything else (barcodes,
   Aztec boarding passes) is kept as the picture itself.
-- **Without a connection:** codes are also kept on each device, so they can be
-  shown when the server is out of reach. This works in the Android app, and in
-  browsers when the app is served over HTTPS (browsers only allow offline pages on
-  HTTPS). Untick "Keep codes on this device" to turn it off for a device. Signing
-  out removes the copy. On the device the copy is not encrypted, so keep the
-  phone locked.
+- **In the Android app** QR codes have their own screen, built into the app: from
+  the QR codes tab, the "QR codes" bar (servers older than this feature), the
+  "Show my QR codes" button when the server is unreachable, or a long press on the
+  app icon. Codes are stored on the phone encrypted with a key in Android's
+  keystore, work with no connection at all, and sync both ways with the server:
+  changes made on the phone (also offline) are sent when the server is reachable,
+  and changes made in a browser arrive on the phone. If the same code is changed in
+  both places, the last change to reach the server wins; a code edited on the phone
+  but removed elsewhere is kept. Pictures are read with ZXing, which also recognises
+  barcodes and boarding passes. Signing out removes every code from the phone.
+- **In browsers without a connection:** codes are kept in the browser so they can
+  be shown when the server is out of reach, if the app is served over HTTPS
+  (browsers only allow offline pages on HTTPS). Untick "Keep codes on this device"
+  to turn it off. Signing out removes the copy. In a browser this copy is not
+  encrypted, so keep the device locked.
 
 ## Install on Unraid
 

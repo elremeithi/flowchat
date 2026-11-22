@@ -40,6 +40,9 @@ public final class Api {
         void onMessage(JSONObject message);
 
         void onDelete(String id);
+
+        /** A QR code was added, changed or removed on another device. */
+        void onCodesChanged();
     }
 
     public interface Progress {
@@ -205,6 +208,31 @@ public final class Api {
         return list == null ? new JSONArray() : list;
     }
 
+    // ---------- QR codes ----------
+
+    /** All QR codes on the server. Throws HttpError 404 when the server is too old to have them. */
+    public JSONArray listCodes() throws IOException {
+        JSONArray list = finish(open("/api/codes", "GET")).optJSONArray("codes");
+        return list == null ? new JSONArray() : list;
+    }
+
+    public JSONObject createCode(JSONObject body) throws IOException {
+        HttpURLConnection c = open("/api/codes", "POST");
+        c.setReadTimeout(60000);
+        writeJson(c, body);
+        return finish(c);
+    }
+
+    public JSONObject updateCode(String id, JSONObject body) throws IOException {
+        HttpURLConnection c = open("/api/codes/" + id, "PUT");
+        writeJson(c, body);
+        return finish(c);
+    }
+
+    public void deleteCode(String id) throws IOException {
+        finish(open("/api/codes/" + id, "DELETE"));
+    }
+
     public JSONObject sendText(String text) throws IOException {
         HttpURLConnection c = open("/api/messages", "POST");
         try {
@@ -303,6 +331,7 @@ public final class Api {
         try {
             if (event.equals("message")) events.onMessage(new JSONObject(data));
             else if (event.equals("delete")) events.onDelete(new JSONObject(data).optString("id"));
+            else if (event.equals("code") || event.equals("codeDelete")) events.onCodesChanged();
         } catch (JSONException ignored) {
             // skip events this version does not understand
         }

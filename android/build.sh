@@ -4,12 +4,17 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-VERSION_CODE=${VERSION_CODE:-3}
-VERSION_NAME=${VERSION_NAME:-1.2}
+VERSION_CODE=${VERSION_CODE:-4}
+VERSION_NAME=${VERSION_NAME:-1.3}
 FRAMEWORK=/usr/share/android-framework-res/framework-res.apk   # Android 13 resources
 ANDROID_JAR=lib/android-all.jar                                  # Android 14 classes, compile only
 ANDROID_ALL=14-robolectric-10818077
+ZXING_JAR=lib/zxing-core-3.5.3.jar                            # QR and barcode reading/writing, Apache-2.0
 
+if [ ! -f "$ZXING_JAR" ]; then
+  mkdir -p lib
+  curl -fL -o "$ZXING_JAR" https://repo1.maven.org/maven2/com/google/zxing/core/3.5.3/core-3.5.3.jar
+fi
 if [ ! -f "$ANDROID_JAR" ]; then
   mkdir -p lib
   curl -fL -o "$ANDROID_JAR" \
@@ -24,9 +29,9 @@ aapt2 link -o build/base.apk -I "$FRAMEWORK" --manifest AndroidManifest.xml --ja
   --min-sdk-version 29 --target-sdk-version 33 \
   --version-code "$VERSION_CODE" --version-name "$VERSION_NAME" build/res.zip
 
-javac --release 8 -Xlint:-options -encoding UTF-8 -cp "$ANDROID_JAR" -d build/classes \
+javac --release 8 -Xlint:-options -encoding UTF-8 -cp "$ANDROID_JAR:$ZXING_JAR" -d build/classes \
   $(find src build/gen -name '*.java')
-dalvik-exchange --dex --min-sdk-version=26 --output=build/dex/classes.dex build/classes
+dalvik-exchange --dex --min-sdk-version=26 --output=build/dex/classes.dex build/classes "$ZXING_JAR"
 
 cp build/base.apk build/unsigned.apk
 (cd build/dex && zip -q ../unsigned.apk classes.dex)

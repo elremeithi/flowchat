@@ -31,6 +31,8 @@ async function api(method, url, body) {
 // ---------- login ----------
 // Present when the page runs inside the Flowchat Android app.
 const androidApp = window.FlowchatAndroid || null;
+// Android app 1.3 and newer has its own QR codes screen, which the page's QR tab opens.
+const nativeCodes = !!(androidApp && androidApp.openCodes && androidApp.pageHasCodes);
 function tellApp() { try { if (androidApp) androidApp.sessionChanged(); } catch {} }
 
 function guessDevice() {
@@ -392,6 +394,7 @@ addEventListener('drop', (e) => {
 });
 
 // ---------- devices ----------
+if (nativeCodes) $('codesOffline').closest('label').hidden = true;
 if (androidApp) {
   $('appSettingsBtn').hidden = false;
   $('appSettingsBtn').addEventListener('click', () => { try { androidApp.openAppSettings(); } catch {} });
@@ -469,6 +472,12 @@ function route() {
   const codeMatch = /^code-([a-f0-9]{32})$/.exec(h);
   let next = h === 'notes' || noteMatch ? 'notes' : h === 'codes' || codeMatch ? 'codes' : 'chat';
   if (offline) next = 'codes';
+  if (nativeCodes && next === 'codes' && !offline) {
+    // Inside the Android app, QR codes have their own screen, stored encrypted on the phone.
+    try { androidApp.openCodes(); } catch {}
+    location.replace(tab === 'notes' ? '#notes' : '#chat');
+    return;
+  }
   if (tab === 'notes' && next !== 'notes') flushNote();
   tab = next;
   $('chatView').hidden = tab !== 'chat';
@@ -750,7 +759,8 @@ function codeRemoved(id) {
 }
 
 // ----- the copy kept on this device, for showing codes without a connection -----
-function offlineWanted() { return stored('flow_codes_offline') !== '0'; }
+// In the Android app the app keeps its own encrypted copy (see nativeCodes), so the page keeps none.
+function offlineWanted() { return !nativeCodes && stored('flow_codes_offline') !== '0'; }
 function forgetCodeCache() { try { localStorage.removeItem('flow_codes'); } catch {} }
 function saveCodeCache() {
   if (!offlineWanted()) return forgetCodeCache();
@@ -1004,6 +1014,11 @@ function startOffline() {
   $('offlineBar').hidden = false;
   $('codesOffline').closest('label').hidden = true;
   setStatus('Offline', 'down');
+  if (nativeCodes) {
+    try { androidApp.pageHasCodes(); androidApp.openCodes(); } catch {}
+    $('codesEmpty').querySelector('p:last-child').textContent = 'Your QR codes are in the app: tap the QR codes tab above, or "Try again" once your server is reachable.';
+    $('tabCodes').addEventListener('click', (e) => { e.preventDefault(); try { androidApp.openCodes(); } catch {} });
+  }
   if (!/^#code-/.test(location.hash)) location.replace('#codes');
   route();
 }
@@ -1024,6 +1039,7 @@ async function start() {
   }
   $('login').hidden = true;
   $('app').hidden = false;
+  if (nativeCodes) { try { androidApp.pageHasCodes(); } catch {} forgetCodeCache(); }
   text.value = stored('flow_draft') || '';
   autosize();
   await Promise.all([loadLatest(), loadNotes(), loadCodes()]);

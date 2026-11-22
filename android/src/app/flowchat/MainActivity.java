@@ -52,6 +52,8 @@ public final class MainActivity extends Activity {
     private TextView errorText;
     private ValueCallback<Uri[]> fileCallback;
     private String server;
+    /** Shown when the server's page has no QR codes tab of its own (older servers). */
+    private View codesBar;
     /** Loading the copy of the page saved on this phone, because the server could not be reached. */
     private boolean fromCache;
 
@@ -67,11 +69,16 @@ public final class MainActivity extends Activity {
         }
         AlertService.createChannels(this);
 
-        FrameLayout root = new FrameLayout(this);
+        FrameLayout frame = new FrameLayout(this);
         web = new WebView(this);
-        root.addView(web, new FrameLayout.LayoutParams(-1, -1));
+        frame.addView(web, new FrameLayout.LayoutParams(-1, -1));
         errorView = buildErrorView();
-        root.addView(errorView, new FrameLayout.LayoutParams(-1, -1));
+        frame.addView(errorView, new FrameLayout.LayoutParams(-1, -1));
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.addView(frame, new LinearLayout.LayoutParams(-1, 0, 1));
+        codesBar = buildCodesBar();
+        root.addView(codesBar);
         setContentView(root);
 
         setUpWebView();
@@ -271,7 +278,12 @@ public final class MainActivity extends Activity {
         CookieManager cm = CookieManager.getInstance();
         cm.flush();
         String session = sessionCookie(cm.getCookie(server + "/"));
-        if (!session.equals(Prefs.cookie(this))) Prefs.setCookie(this, session);
+        String before = Prefs.cookie(this);
+        if (!session.equals(before)) {
+            Prefs.setCookie(this, session);
+            if (session.isEmpty()) CodeStore.get(this).wipe(); // signed out: no codes stay on this phone
+            else CodeStore.get(this).sync(); // signed in: send codes added here, fetch the rest
+        }
         AlertService.sync(this);
     }
 
@@ -353,6 +365,27 @@ public final class MainActivity extends Activity {
             });
         }
 
+        /** The page has its own QR codes tab, which opens the app's screen: hide the app's bar. */
+        @JavascriptInterface
+        public void pageHasCodes() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    codesBar.setVisibility(View.GONE);
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void openCodes() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    MainActivity.this.openCodes();
+                }
+            });
+        }
+
         @JavascriptInterface
         public void reconnect() {
             runOnUiThread(new Runnable() {
@@ -410,11 +443,42 @@ public final class MainActivity extends Activity {
                 startActivity(new Intent(MainActivity.this, SetupActivity.class));
             }
         });
+        Button codes = new Button(this);
+        codes.setText("Show my QR codes");
+        codes.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View b) {
+                openCodes();
+            }
+        });
         v.addView(title);
         v.addView(errorText);
+        v.addView(codes);
         v.addView(retry);
         v.addView(settings);
         return v;
+    }
+
+    private void openCodes() {
+        startActivity(new Intent(this, CodesActivity.class));
+    }
+
+    private View buildCodesBar() {
+        LinearLayout bar = new LinearLayout(this);
+        bar.setGravity(Gravity.CENTER);
+        bar.setBackgroundColor(themeColor(android.R.attr.colorBackground));
+        bar.setElevation(dp(4));
+        Button codes = new Button(this, null, android.R.attr.borderlessButtonStyle);
+        codes.setText("QR codes");
+        codes.setAllCaps(false);
+        codes.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View b) {
+                openCodes();
+            }
+        });
+        bar.addView(codes, new LinearLayout.LayoutParams(-1, -2));
+        return bar;
     }
 
     private void showError(String why) {

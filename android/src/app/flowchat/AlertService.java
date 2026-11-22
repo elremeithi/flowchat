@@ -174,6 +174,11 @@ public final class AlertService extends Service {
                     public void onDelete(String id) {
                         nm.cancel(TAG_MESSAGE, id.hashCode());
                     }
+
+                    @Override
+                    public void onCodesChanged() {
+                        CodeStore.get(AlertService.this).sync();
+                    }
                 });
             } catch (Api.HttpError e) {
                 if (e.status == 401) {
@@ -310,6 +315,7 @@ public final class AlertService extends Service {
 
     private void signedOut() {
         Prefs.setCookie(this, "");
+        CodeStore.get(this).wipe();
         nm.notify(ID_STOPPED, new Notification.Builder(this, CH_MESSAGES)
                 .setSmallIcon(R.drawable.ic_notify)
                 .setContentTitle("Flowchat alerts stopped")
