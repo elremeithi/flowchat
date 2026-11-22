@@ -180,11 +180,7 @@ function messageNode(m) {
     const copy = el('button', null, 'Copy');
     copy.type = 'button';
     copy.addEventListener('click', async () => {
-      try { await navigator.clipboard.writeText(m.text); }
-      catch {
-        const t = el('textarea'); t.value = m.text; document.body.append(t); t.select();
-        document.execCommand('copy'); t.remove();
-      }
+      await copyText(m.text);
       copy.textContent = 'Copied';
       setTimeout(() => { copy.textContent = 'Copy'; }, 1500);
     });
@@ -812,6 +808,13 @@ function codeVisual(c) {
   box.innerHTML = qrSvg(c.content); // generated above from numbers only, never from the content's text
   return box.firstChild;
 }
+async function copyText(value) {
+  try { await navigator.clipboard.writeText(value); }
+  catch {
+    const t = el('textarea'); t.value = value; document.body.append(t); t.select();
+    document.execCommand('copy'); t.remove();
+  }
+}
 const codeSummary = (c) => (c.kind === 'image' ? 'Picture' : c.content.replace(/\s+/g, ' ').slice(0, 60));
 
 function renderCodes() {
@@ -820,12 +823,31 @@ function renderCodes() {
   const grid = $('codeGrid');
   grid.textContent = '';
   for (const c of shown) {
-    const a = el('a', 'code-card');
-    a.href = `#code-${c.id}`;
-    const thumb = el('span', 'code-thumb');
+    // The picture shows the code full screen; the title and text below copy the code's text.
+    const card = el('div', 'code-card');
+    const thumb = el('a', 'code-thumb');
+    thumb.href = `#code-${c.id}`;
+    thumb.setAttribute('aria-label', `Show ${c.title}`);
     try { thumb.append(codeVisual(c)); } catch { thumb.textContent = '?'; }
-    a.append(thumb, el('strong', null, c.title), el('span', 'sub', codeSummary(c)));
-    grid.append(a);
+    const sub = el('span', 'sub', codeSummary(c));
+    let label;
+    if (c.kind === 'image') {
+      label = el('a', 'code-label'); // a picture has no text to copy: show it instead
+      label.href = `#code-${c.id}`;
+    } else {
+      label = el('button', 'code-label');
+      label.type = 'button';
+      label.title = 'Copy the text';
+      label.addEventListener('click', async () => {
+        await copyText(c.content);
+        sub.textContent = 'Copied';
+        sub.classList.add('copied');
+        setTimeout(() => { sub.textContent = codeSummary(c); sub.classList.remove('copied'); }, 1500);
+      });
+    }
+    label.append(el('strong', null, c.title), sub);
+    card.append(thumb, label);
+    grid.append(card);
   }
   $('codesEmpty').hidden = codes.length > 0;
   $('codesNoMatch').hidden = !(codes.length && !shown.length);
