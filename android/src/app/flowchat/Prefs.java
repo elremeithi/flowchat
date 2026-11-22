@@ -43,6 +43,15 @@ final class Prefs {
         p(c).edit().putString("alerts", value).apply();
     }
 
+    /** Block screenshots, screen recording and the recent-apps preview. On unless turned off. */
+    static boolean blockScreenshots(Context c) {
+        return p(c).getBoolean("blockScreenshots", true);
+    }
+
+    static void setBlockScreenshots(Context c, boolean value) {
+        p(c).edit().putBoolean("blockScreenshots", value).apply();
+    }
+
     /** Time of the newest message already seen, so nothing is announced twice. 0 = never connected. */
     static long lastTs(Context c) {
         return p(c).getLong("lastTs", 0);

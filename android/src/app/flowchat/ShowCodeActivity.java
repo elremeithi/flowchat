@@ -151,6 +151,7 @@ public final class ShowCodeActivity extends Activity implements CodeStore.Listen
     @Override
     protected void onResume() {
         super.onResume();
+        Secure.apply(this);
         store.addListener(this);
         render();
     }

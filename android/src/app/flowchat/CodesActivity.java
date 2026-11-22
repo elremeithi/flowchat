@@ -132,6 +132,7 @@ public final class CodesActivity extends Activity implements CodeStore.Listener 
     @Override
     protected void onResume() {
         super.onResume();
+        Secure.apply(this);
         store.addListener(this);
         refresh();
         store.sync();

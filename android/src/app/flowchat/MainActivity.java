@@ -98,6 +98,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        Secure.apply(this);
         visible = true;
         String now = Prefs.server(this);
         if (web != null && !now.isEmpty() && !now.equals(server)) {

@@ -242,4 +242,10 @@ public final class ShareActivity extends Activity {
     private int dp(int v) {
         return (int) (v * getResources().getDisplayMetrics().density + 0.5f);
     }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        Secure.apply(this);
+    }
 }

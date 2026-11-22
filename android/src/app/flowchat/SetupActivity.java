@@ -12,6 +12,8 @@ import android.view.View;
 import android.webkit.CookieManager;
 import android.webkit.WebStorage;
 import android.widget.Button;
+import android.widget.CompoundButton;
+import android.widget.Switch;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.RadioButton;
@@ -80,6 +82,23 @@ public final class SetupActivity extends Activity {
         });
         col.addView(batteryButton);
 
+        col.addView(heading("Privacy"));
+        final Switch block = new Switch(this);
+        block.setId(3);
+        block.setText("Block screenshots and screen recording");
+        block.setChecked(Prefs.blockScreenshots(this));
+        block.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton b, boolean on) {
+                Prefs.setBlockScreenshots(SetupActivity.this, on);
+                Secure.apply(SetupActivity.this); // other screens follow when they come back
+            }
+        });
+        col.addView(block);
+        col.addView(note("When on, screenshots and recordings of Flowchat are blocked, the app looks blank in "
+                + "recent apps, and it shows as black when the screen is shared or cast. Turn it off to take a "
+                + "screenshot, for example of a QR code. This setting applies to this phone only."));
+
         error = note("");
         error.setTextColor(0xFFD93A32);
         error.setVisibility(View.GONE);
@@ -103,6 +122,7 @@ public final class SetupActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        Secure.apply(this);
         boolean exempt = getSystemService(PowerManager.class).isIgnoringBatteryOptimizations(getPackageName());
         battery.setText(exempt
                 ? "Background use is allowed, so alerts arrive promptly."
