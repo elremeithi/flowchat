@@ -233,6 +233,25 @@ Put it behind one of these:
 Over HTTPS the page can be installed as an app from the browser menu
 ("Install" / "Add to Home Screen").
 
+## Publishing a release
+
+GitHub → **Actions** → **Release** → **Run workflow**, enter a version such as
+`1.6.0`, and run it. It builds and signs the Android app, builds the server image
+(also pushed to `ghcr.io/elremeithi/flowchat:<version>`), and publishes a release
+with the APK, the image file, the Unraid template and checksums. Notes are taken
+from `docs/release-notes/<version>.md` when that file exists. Leave "Android
+version code" empty unless the app's code in `android/build.sh` hasn't been raised
+since the last release: phones only install an update with a higher or equal code.
+
+One-time setup, in the repository's Settings → Secrets and variables → Actions:
+
+- `ANDROID_KEYSTORE_BASE64`: the signing keystore, base64-encoded
+  (`base64 -w0 android/flowchat.keystore`)
+- `ANDROID_KEYSTORE_PASSWORD`: the keystore's password (`android/flowchat.keystore.pass`)
+
+Anyone who can change the workflows in this repository can use the key, so keep
+write access to yourself.
+
 ## Run without Docker
 
 ```bash

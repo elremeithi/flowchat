@@ -1,0 +1,128 @@
+# Publishes a Flowchat release: Actions → Release → Run workflow, enter a version, run.
+# Builds and signs the Android app, builds the server image (also pushed to ghcr.io with the
+# version as its tag), and publishes a GitHub release with notes, files and checksums.
+#
+# Needs two repository secrets (Settings → Secrets and variables → Actions):
+#   ANDROID_KEYSTORE_BASE64    the app signing keystore (android/flowchat.keystore), base64-encoded
+#   ANDROID_KEYSTORE_PASSWORD  its password (android/flowchat.keystore.pass)
+# Keep the same keystore for every release: phones only accept updates signed with it.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish, e.g. 1.6.0 (the tag becomes v1.6.0)"
+        required: true
+      version_code:
+        description: "Android version code: a whole number, higher than the last release (empty = the one in android/build.sh)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the version and that the tag is free
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Version must look like 1.6.0"; exit 1
+          fi
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "::error::A release v$VERSION already exists. Pick a new version."; exit 1
+          fi
+
+      - name: Check the signing secrets
+        env:
+          KS: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KP: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -z "$KS" ] || [ -z "$KP" ]; then
+            echo "::error::Add the ANDROID_KEYSTORE_BASE64 and ANDROID_KEYSTORE_PASSWORD secrets first (see the top of this workflow)."
+            exit 1
+          fi
+
+      - name: Install Android build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends aapt zipalign apksigner dalvik-exchange android-framework-res
+
+      - name: Build and sign the Android app
+        env:
+          KS: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KP: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          VERSION_CODE_INPUT: ${{ inputs.version_code }}
+        run: |
+          umask 077
+          KEYDIR="$RUNNER_TEMP/keys"
+          mkdir -p "$KEYDIR"
+          printf '%s' "$KS" | base64 -d > "$KEYDIR/flowchat.keystore"
+          printf '%s\n' "$KP" > "$KEYDIR/flowchat.keystore.pass"
+          export VERSION_NAME="$VERSION"
+          if [ -n "$VERSION_CODE_INPUT" ]; then export VERSION_CODE="$VERSION_CODE_INPUT"; fi
+          KEYSTORE="$KEYDIR/flowchat.keystore" KEYSTORE_PASS_FILE="$KEYDIR/flowchat.keystore.pass" KEY_ALIAS=flowchat \
+            android/build.sh
+          rm -rf "$KEYDIR"
+          mkdir -p dist
+          cp android/Flowchat.apk "dist/Flowchat-$VERSION.apk"
+
+      - name: Build the server image
+        run: |
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/flowchat"
+          docker build -t "$IMAGE:$VERSION" -t "flowchat:$VERSION" -t flowchat:latest .
+          docker save "flowchat:$VERSION" flowchat:latest | gzip > "dist/flowchat-image-$VERSION.tar.gz"
+          cp unraid/flowchat.xml dist/flowchat.xml
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Push the image to ghcr.io with its version tag
+        run: |
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker push "$IMAGE:$VERSION"
+
+      - name: Write the release notes
+        run: |
+          NOTES="docs/release-notes/$VERSION.md"
+          {
+            if [ -f "$NOTES" ]; then cat "$NOTES"; else echo "Flowchat $VERSION."; fi
+            echo
+            echo "## Downloads"
+            echo
+            echo "| File | What it is |"
+            echo "| --- | --- |"
+            echo "| \`Flowchat-$VERSION.apk\` | Android app, Android 10 or newer. Installs over earlier versions. |"
+            echo "| \`flowchat-image-$VERSION.tar.gz\` | Server image (x86-64) for offline install: \`docker load -i flowchat-image-$VERSION.tar.gz\`. Or pull \`$IMAGE:$VERSION\`. |"
+            echo "| \`flowchat.xml\` | Unraid template |"
+            echo
+            echo "## Checksums (SHA-256)"
+            echo
+            echo '```'
+            (cd dist && sha256sum *)
+            echo '```'
+            echo
+            echo "APK signing certificate SHA-256: \`$(apksigner verify --print-certs dist/Flowchat-$VERSION.apk | sed -n 's/.*certificate SHA-256 digest: //p' | head -1)\`"
+          } > release-notes.md
+          (cd dist && sha256sum * > SHA256SUMS.txt)
+          cat release-notes.md
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v$VERSION" dist/* \
+            --target "$GITHUB_SHA" \
+            --title "Flowchat $VERSION" \
+            --notes-file release-notes.md
