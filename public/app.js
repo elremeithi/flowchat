@@ -31,8 +31,9 @@ async function api(method, url, body) {
 // ---------- login ----------
 // Present when the page runs inside the Flowchat Android app.
 const androidApp = window.FlowchatAndroid || null;
-// Android app 1.3 and newer has its own QR codes screen, which the page's QR tab opens.
-const nativeCodes = !!(androidApp && androidApp.openCodes && androidApp.pageHasCodes);
+// Android app 1.7.1 and newer keeps its own encrypted copy of the QR codes, shown when the
+// server can't be reached. While it can, the QR codes tab shows the page's own view.
+const nativeCodes = !!(androidApp && androidApp.openCodes && androidApp.hasOfflineCodes);
 function tellApp() { try { if (androidApp) androidApp.sessionChanged(); } catch {} }
 
 function guessDevice() {
@@ -1050,7 +1051,7 @@ function startOffline() {
   $('codesOffline').closest('label').hidden = true;
   setStatus('Offline', 'down');
   if (nativeCodes) {
-    try { androidApp.pageHasCodes(); androidApp.openCodes(); } catch {}
+    try { androidApp.openCodes(); } catch {}
     $('codesEmpty').querySelector('p:last-child').textContent = 'Your QR codes are in the app: tap the QR codes tab above, or "Try again" once your server is reachable.';
   }
   if (!/^#code-/.test(location.hash)) location.replace('#codes');
@@ -1073,7 +1074,7 @@ async function start() {
   }
   $('login').hidden = true;
   $('app').hidden = false;
-  if (nativeCodes) { try { androidApp.pageHasCodes(); } catch {} forgetCodeCache(); }
+  if (nativeCodes) forgetCodeCache();
   text.value = stored('flow_draft') || '';
   autosize();
   await Promise.all([loadLatest(), loadNotes(), loadCodes()]);

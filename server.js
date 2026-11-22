@@ -22,7 +22,7 @@ const ALLOWED_HOSTS = (process.env.ALLOWED_HOSTS || '').split(',').map((h) => h.
 const RETENTION_MS = (Number(process.env.RETENTION_DAYS) || 0) * 86400e3;
 const PUBLIC = path.join(__dirname, 'public');
 // Shown in Settings (browser and app) so it is easy to tell whether a server is up to date.
-const SERVER_VERSION = '1.7';
+const SERVER_VERSION = '1.7.1';
 
 // `node server.js --totp-new` prints a fresh two-step sign-in secret and exits.
 if (process.argv.includes('--totp-new')) {

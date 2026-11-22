@@ -364,9 +364,15 @@ public final class MainActivity extends Activity {
             });
         }
 
-        /** The page has its own QR codes tab, which opens the app's screen. Kept for the page's check. */
+        /**
+         * Tells a 1.7.1-or-newer page that this app keeps an offline copy of the QR codes, which
+         * the page opens only when the server can't be reached. It replaces pageHasCodes on purpose:
+         * pages older than 1.7 looked for that name and then sent their QR codes tab to the app's
+         * screen and switched to Chat. Without it, an older server's page shows its own codes view.
+         */
         @JavascriptInterface
-        public void pageHasCodes() {
+        public boolean hasOfflineCodes() {
+            return true;
         }
 
         @JavascriptInterface
