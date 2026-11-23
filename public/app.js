@@ -595,16 +595,25 @@ function route() {
 addEventListener('hashchange', route);
 
 // ---------- Markdown, for notes ----------
-// A small renderer that builds page elements directly (never HTML from the note's text), covering
-// what notes need: headings, bold, italic, strikethrough, code, links, quotes, rules, lists and
-// to-do items. onToggle(line, checked) is called when a to-do box is ticked.
+// A small renderer that builds page elements directly (never HTML from the note's text). It reads
+// the Markdown that Nextcloud's Text editor writes: headings, **bold**, *italic*, __underline__,
+// ~~strikethrough~~, ==highlight==, code, links, images, quotes, rules, lists, to-dos, tables,
+// callouts (::: info), details, front matter, backslash escapes and backslash line breaks.
+// onToggle(line, checked) is called when a to-do box is ticked; offset is the line number of src's
+// first line within the whole note.
 const MD_INLINE = [
-  ['code', /`([^`\n]+)`/],
-  ['link', /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+|mailto:[^\s)]+)\)/],
-  ['strong', /\*\*(?=\S)([^\n]*?\S)\*\*|__(?=\S)([^\n]*?\S)__/],
+  ['esc', /\\([!-/:-@[-`{-~])/],
+  ['code', /(`+)([^`\n]|[^`\n][^\n]*?[^`\n])\1(?!`)/],
+  ['img', /!\[([^\]\n]*)\]\(<?([^\s)>]+)>?(?:\s+"[^"\n]*")?\)/],
+  ['link', /\[((?:\\.|[^\]\n])+)\]\(<?([^\s)>]+)>?(?:\s+"[^"\n]*")?\)/],
+  ['auto', /<((?:https?:\/\/|mailto:)[^\s>]+)>/],
+  ['strong', /\*\*(?=\S)([^\n]*?\S)\*\*/],
+  ['u', /__(?=\S)([^\n]*?\S)__/], // Nextcloud writes underline this way
   ['del', /~~(?=\S)([^\n]*?\S)~~/],
-  ['em', /\*(?=[^\s*])([^*\n]*?[^\s*])\*|(?<![\w])_(?=[^\s_])([^_\n]*?[^\s_])_(?![\w])/],
+  ['mark', /==(?=\S)([^\n]*?\S)==/],
+  ['em', /\*(?=[^\s*])([^*\n]*?[^\s*])\*|(?<![\w\\])_(?=[^\s_])([^_\n]*?[^\s_\\])_(?![\w])/],
 ];
+const webUrl = (u) => /^(https?:|mailto:)/i.test(u);
 function mdInline(parent, text) {
   while (text) {
     let best = null;
@@ -615,12 +624,22 @@ function mdInline(parent, text) {
     if (!best) { linkify(parent, text); return; }
     const { kind, m } = best;
     linkify(parent, text.slice(0, m.index));
-    if (kind === 'code') parent.append(el('code', null, m[1]));
-    else if (kind === 'link') {
-      const a = el('a');
-      a.href = m[2]; a.target = '_blank'; a.rel = 'noopener noreferrer';
-      mdInline(a, m[1]);
-      parent.append(a);
+    if (kind === 'esc') parent.append(m[1]);
+    else if (kind === 'code') parent.append(el('code', null, m[2].replace(/^ (.*) $/, '$1')));
+    else if (kind === 'img') {
+      if (/^https?:/i.test(m[2])) {
+        const img = el('img');
+        img.src = m[2]; img.alt = m[1]; img.loading = 'lazy'; img.referrerPolicy = 'no-referrer';
+        parent.append(img);
+      } else parent.append(el('span', 'md-file', `🖼 ${m[1] || m[2].split('/').pop()}`)); // a file kept in Nextcloud
+    } else if (kind === 'link' || kind === 'auto') {
+      const url = kind === 'auto' ? m[1] : m[2];
+      if (webUrl(url)) {
+        const a = el('a');
+        a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+        if (kind === 'auto') a.textContent = url; else mdInline(a, m[1]);
+        parent.append(a);
+      } else mdInline(parent, m[1]); // a link into Nextcloud only works there; keep its text
     } else {
       const n = el(kind);
       mdInline(n, m[1] ?? m[2]);
@@ -629,39 +648,142 @@ function mdInline(parent, text) {
     text = text.slice(m.index + m[0].length);
   }
 }
-function renderMarkdown(parent, src, onToggle) {
+const MD_LIST = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/;
+const MD_TABLE_SEP = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
+const mdCells = (l) => l.trim().replace(/^\|/, '').replace(/(?<!\\)\|$/, '').split(/(?<!\\)\|/).map((c) => c.trim());
+const mdIsTable = (lines, i) => lines[i].includes('|') && i + 1 < lines.length && lines[i + 1].includes('-')
+  && MD_TABLE_SEP.test(lines[i + 1]) && (lines[i + 1].includes('|') || mdCells(lines[i]).length === 1);
+const MD_BLOCK_START = /^\s*(```|~~~|#{1,6}\s|>|:::|<details\b|<\/details>)/;
+const mdIsRule = (l) => /^\s*([-*_])(\s*\1){2,}\s*$/.test(l);
+// The lines up to the one closing a ::: block or <details>, allowing nested ones.
+function mdBlockEnd(lines, i, open, close) {
+  for (let depth = 1, j = i + 1; j < lines.length; j++) {
+    if (close.test(lines[j])) { if (!--depth) return j; } else if (open.test(lines[j])) depth++;
+  }
+  return lines.length;
+}
+function mdTask(li, text, lineNo, onToggle) {
+  const task = /^\[([ xX])\](?:\s+(.*))?$/.exec(text);
+  if (!task) return false;
+  li.className = 'task';
+  const box = el('input');
+  box.type = 'checkbox';
+  box.checked = task[1] !== ' ';
+  if (onToggle) box.addEventListener('change', () => onToggle(lineNo, box.checked));
+  else box.disabled = true;
+  const label = el('span');
+  mdInline(label, task[2] || '');
+  if (box.checked) label.className = 'done';
+  const row = el('span', 'task-row'); // keeps any nested list below the item, not beside it
+  row.append(box, label);
+  li.append(row);
+  return true;
+}
+// One line of a paragraph: a trailing backslash or two spaces is a line break, as in Nextcloud.
+const mdLine = (l) => l.trim().replace(/(\\| {2,})$/, '').trimEnd();
+function renderMarkdown(parent, src, onToggle, offset = 0) {
   const lines = src.replace(/\r\n?/g, '\n').split('\n');
-  const LIST = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/;
   let i = 0;
+  // Front matter: a block of "key: value" lines between --- at the very top.
+  if (lines[0] === '---' && /^[\w-]+\s*:/.test(lines[1] || '')) {
+    const end = lines.findIndex((l, j) => j > 0 && /^(---|\.\.\.)$/.test(l));
+    if (end > 0) {
+      const pre = el('pre', 'front-matter');
+      pre.append(el('code', null, lines.slice(1, end).join('\n')));
+      parent.append(pre);
+      i = end + 1;
+    }
+  }
   while (i < lines.length) {
     const line = lines[i];
     let m;
     if (!line.trim()) { i++; continue; }
-    if ((m = /^\s*(```|~~~)/.exec(line))) {
+    if ((m = /^\s*(`{3,}|~{3,})/.exec(line))) {
       const fence = m[1], code = [];
       for (i++; i < lines.length && !lines[i].trim().startsWith(fence); i++) code.push(lines[i]);
       i++;
       const pre = el('pre');
       pre.append(el('code', null, code.join('\n')));
       parent.append(pre);
-    } else if ((m = /^(#{1,6})\s+(.*?)\s*#*\s*$/.exec(line))) {
+    } else if ((m = /^\s*:::\s*(\w+)\s*(.*)$/.exec(line))) {
+      // Nextcloud callouts (::: info, success, warn, error) and ::: details Summary
+      const end = mdBlockEnd(lines, i, /^\s*:::\s*\w/, /^\s*:::\s*$/);
+      const kind = m[1].toLowerCase(), inner = lines.slice(i + 1, end).join('\n');
+      let box;
+      if (kind === 'details') {
+        box = el('details');
+        const sum = el('summary');
+        mdInline(sum, m[2] || 'Details');
+        box.append(sum);
+      } else box = el('div', `callout callout-${/^(info|success|warn|error)$/.test(kind) ? kind : 'info'}`);
+      renderMarkdown(box, inner, onToggle, offset + i + 1);
+      parent.append(box);
+      i = end + 1;
+    } else if (/^\s*<details\b[^>]*>\s*$/.test(line)) {
+      const end = mdBlockEnd(lines, i, /^\s*<details\b/, /^\s*<\/details>\s*$/);
+      const box = el('details');
+      const sum = el('summary');
+      let start = i + 1;
+      if ((m = /^\s*<summary>(.*?)<\/summary>\s*$/.exec(lines[start] || ''))) { mdInline(sum, m[1]); start++; }
+      else sum.textContent = 'Details';
+      box.append(sum);
+      renderMarkdown(box, lines.slice(start, end).join('\n'), onToggle, offset + start);
+      parent.append(box);
+      i = end + 1;
+    } else if ((m = /^\s{0,3}(#{1,6})\s+(.*?)(\s+#+)?\s*$/.exec(line))) {
       const h = el('h' + Math.min(6, m[1].length + 1)); // one level down: the note's title is the top
       mdInline(h, m[2]);
       parent.append(h);
       i++;
-    } else if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) {
+    } else if (mdIsRule(line)) {
       parent.append(el('hr'));
       i++;
+    } else if (mdIsTable(lines, i)) {
+      const align = mdCells(lines[i + 1]).map((c) => (c.endsWith(':') ? (c.startsWith(':') ? 'center' : 'right') : c.startsWith(':') ? 'left' : ''));
+      const table = el('table');
+      const row = (text, tag) => {
+        const tr = el('tr');
+        mdCells(text).forEach((c, k) => {
+          const cell = el(tag);
+          if (align[k]) cell.style.textAlign = align[k];
+          c.split(/<br\s*\/?>/i).forEach((part, n) => { if (n) cell.append(el('br')); mdInline(cell, part.trim()); });
+          tr.append(cell);
+        });
+        return tr;
+      };
+      const head = el('thead'), body = el('tbody');
+      head.append(row(lines[i], 'th'));
+      for (i += 2; i < lines.length && lines[i].trim() && lines[i].includes('|'); i++) body.append(row(lines[i], 'td'));
+      table.append(head, body);
+      const wrap = el('div', 'table-wrap'); // wide tables scroll sideways instead of stretching the page
+      wrap.append(table);
+      parent.append(wrap);
     } else if (/^\s*>/.test(line)) {
-      const inner = [];
+      const start = i, inner = [];
       for (; i < lines.length && /^\s*>/.test(lines[i]); i++) inner.push(lines[i].replace(/^\s*>\s?/, ''));
       const q = el('blockquote');
-      renderMarkdown(q, inner.join('\n'));
+      renderMarkdown(q, inner.join('\n'), onToggle, offset + start);
       parent.append(q);
-    } else if (LIST.test(line)) {
-      // Consecutive list lines; deeper indents make nested lists.
+    } else if (MD_LIST.test(line)) {
+      // Consecutive list lines; deeper indents make nested lists, and indented plain lines continue an item.
       const stack = [];
-      for (; i < lines.length && (m = LIST.exec(lines[i])); i++) {
+      let li = null;
+      while (i < lines.length) {
+        if (!lines[i].trim()) { // a blank line inside a list keeps it going if another item follows
+          let j = i;
+          while (j < lines.length && !lines[j].trim()) j++;
+          if (j < lines.length && MD_LIST.test(lines[j])) { i = j; continue; }
+          break;
+        }
+        if (!(m = MD_LIST.exec(lines[i]))) {
+          if (li && /^\s{2,}\S/.test(lines[i]) && !MD_BLOCK_START.test(lines[i])) {
+            li.append(el('br'));
+            mdInline(li.querySelector(':scope > .task-row > span') || li, mdLine(lines[i]));
+            i++;
+            continue;
+          }
+          break;
+        }
         const indent = m[1].replace(/\t/g, '    ').length;
         const ordered = /\d/.test(m[2]);
         while (stack.length && indent < stack[stack.length - 1].indent) stack.pop();
@@ -675,40 +797,159 @@ function renderMarkdown(parent, src, onToggle) {
           top = { indent, ordered, list };
           stack.push(top);
         }
-        const li = el('li');
-        const task = /^\[([ xX])\]\s+(.*)$/.exec(m[3]);
-        if (task) {
-          li.className = 'task';
-          const box = el('input');
-          box.type = 'checkbox';
-          box.checked = task[1] !== ' ';
-          const lineNo = i;
-          if (onToggle) box.addEventListener('change', () => onToggle(lineNo, box.checked));
-          else box.disabled = true;
-          const label = el('span');
-          mdInline(label, task[2]);
-          if (box.checked) label.className = 'done';
-          const row = el('span', 'task-row'); // keeps any nested list below the item, not beside it
-          row.append(box, label);
-          li.append(row);
-        } else mdInline(li, m[3]);
+        li = el('li');
+        if (!mdTask(li, m[3].replace(/(\\| {2,})$/, ''), offset + i, onToggle)) mdInline(li, mdLine(m[3]));
         top.list.append(li);
+        i++;
       }
     } else {
       const p = el('p');
       let first = true;
-      for (; i < lines.length && lines[i].trim() && !/^\s*(```|~~~|#{1,6}\s|>)/.test(lines[i]) && !LIST.test(lines[i]); i++) {
+      for (; i < lines.length && lines[i].trim() && !MD_BLOCK_START.test(lines[i]) && !MD_LIST.test(lines[i])
+        && !mdIsRule(lines[i]) && !mdIsTable(lines, i); i++) {
         if (!first) p.append(el('br'));
-        mdInline(p, lines[i].trim());
+        mdInline(p, mdLine(lines[i]));
         first = false;
       }
+      if (first) { mdInline(p, mdLine(lines[i])); i++; } // a line nothing else took, such as a stray </details>
       parent.append(p);
     }
   }
 }
 // The text of a Markdown line without its markers, for note titles and snippets in the list.
-const mdPlain = (s) => s.replace(/^\s*(#{1,6}\s+|>\s*|[-*+]\s+(\[[ xX]\]\s+)?|\d{1,9}[.)]\s+(\[[ xX]\]\s+)?)/, '')
-  .replace(/\*\*|__|~~|`/g, '').replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+const mdPlain = (s) => s.replace(/^\s*(#{1,6}\s+|>\s*|:::\s*\w*\s*|[-*+]\s+(\[[ xX]\]\s+)?|\d{1,9}[.)]\s+(\[[ xX]\]\s+)?)/, '')
+  .replace(/^\s*(\|?\s*:?-+:?\s*)+\|?\s*$|^\s*<\/?(details|summary)>\s*$/, '')
+  .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/<\/?summary>/g, '').replace(/\*\*|__|~~|==|`/g, '')
+  .replace(/\s*\|\s*/g, ' ').replace(/\\([!-/:-@[-`{-~])/g, '$1').replace(/\\$/, '');
+
+// Pasting formatted text (from Nextcloud Text, a web page or an office app) into a note turns it into
+// Markdown written the way Nextcloud writes it, so a note pasted from Nextcloud keeps its formatting.
+const H2M_BLOCK = /^(P|DIV|H[1-6]|UL|OL|LI|BLOCKQUOTE|PRE|HR|TABLE|THEAD|TBODY|TR|DETAILS|SUMMARY|SECTION|ARTICLE|HEADER|FOOTER|FIGURE|MAIN|NAV|ASIDE|DL|DT|DD|ADDRESS)$/;
+const H2M_SKIP = /^(SCRIPT|STYLE|META|LINK|TITLE|HEAD|TEMPLATE|NOSCRIPT|SVG|BUTTON|INPUT|SELECT|TEXTAREA|IFRAME|OBJECT)$/;
+const h2mEsc = (s) => s.replace(/[\\`*~[\]]|(?<!\w)_|_(?!\w)|==/g, (c) => '\\' + c.split('').join('\\'));
+function h2mWrap(mark, s) {
+  const m = /^(\s*)([\s\S]*?)(\s*)$/.exec(s);
+  return m[2] ? m[1] + mark + m[2] + mark + m[3] : s;
+}
+function h2mInline(n) {
+  if (n.nodeType === 3) return h2mEsc(n.nodeValue.replace(/[ \t\r\n\f]+/g, ' '));
+  if (n.nodeType !== 1 || H2M_SKIP.test(n.tagName)) return '';
+  const t = n.tagName, inner = () => [...n.childNodes].map(h2mInline).join('');
+  const st = n.style || {};
+  switch (t) {
+    case 'BR': return '\\\n';
+    case 'STRONG': return h2mWrap('**', inner());
+    case 'B': return /normal|[1-5]00/.test(st.fontWeight) ? inner() : h2mWrap('**', inner()); // Google Docs wraps everything in <b style="font-weight:normal">
+    case 'EM': case 'I': case 'CITE': return h2mWrap('*', inner());
+    case 'U': case 'INS': return h2mWrap('__', inner());
+    case 'S': case 'DEL': case 'STRIKE': return h2mWrap('~~', inner());
+    case 'MARK': return h2mWrap('==', inner());
+    case 'CODE': case 'KBD': case 'SAMP': case 'TT': {
+      const code = n.textContent.replace(/\s+/g, ' ');
+      if (!code.trim()) return code;
+      const ticks = '`'.repeat(Math.max(0, ...(code.match(/`+/g) || []).map((x) => x.length)) + 1);
+      return ticks + (/^`|`$/.test(code) ? ` ${code} ` : code) + ticks;
+    }
+    case 'A': {
+      const href = n.getAttribute('href') || '', text = inner();
+      if (!href || href.startsWith('#') || /^javascript:/i.test(href)) return text;
+      return text.trim() ? `[${text.trim()}](${href.replace(/[ ()]/g, encodeURIComponent)})` : `<${href}>`;
+    }
+    case 'IMG': {
+      const src = n.getAttribute('src') || '';
+      return src && !src.startsWith('data:') ? `![${h2mEsc(n.getAttribute('alt') || '')}](${src.replace(/[ ()]/g, encodeURIComponent)})` : '';
+    }
+  }
+  let s = inner();
+  if (/^(bold|[6-9]00)$/.test(st.fontWeight)) s = h2mWrap('**', s);
+  if (st.fontStyle === 'italic') s = h2mWrap('*', s);
+  if (/line-through/.test(st.textDecoration + st.textDecorationLine)) s = h2mWrap('~~', s);
+  if (/underline/.test(st.textDecoration + st.textDecorationLine) && t !== 'A') s = h2mWrap('__', s);
+  return s;
+}
+// Text that would read as Markdown at the start of a line gets a backslash, as Nextcloud does.
+const h2mLineStart = (s) => s.split('\n').map((l) => l.replace(/^(\s*)(\d+)([.)]\s)/, '$1$2\\$3')
+  .replace(/^(\s*)(#{1,6}(?=\s|$)|>|[-+](?=\s)|(?=:::))/, '$1\\$2')).join('\n');
+function h2mBlocks(nodes) {
+  const out = [];
+  let para = '';
+  const flush = () => {
+    const t = para.replace(/[ \t]+$/gm, '').replace(/^[ \t]+/gm, '').replace(/(\\\n)+$/, '').trim();
+    if (t) out.push(h2mLineStart(t));
+    para = '';
+  };
+  for (const c of nodes) {
+    if (c.nodeType === 3 || (c.nodeType === 1 && !H2M_BLOCK.test(c.tagName))) { para += h2mInline(c); continue; }
+    if (c.nodeType !== 1) continue;
+    flush();
+    const t = c.tagName, kids = [...c.childNodes];
+    const callout = /\bcallout--?(info|success|warn|warning|error|danger)\b/.exec(c.className || '');
+    if (/^H[1-6]$/.test(t)) {
+      const text = [...c.childNodes].map(h2mInline).join('').replace(/\\\n/g, ' ').trim();
+      if (text) out.push('#'.repeat(+t[1]) + ' ' + text);
+    } else if (t === 'HR') out.push('---');
+    else if (t === 'PRE') {
+      const code = c.textContent.replace(/\n$/, '');
+      const lang = (/(?:language|lang)-(\S+)/.exec((c.querySelector('code') || c).className) || [])[1] || '';
+      const fence = code.includes('```') ? '~~~' : '```';
+      out.push(`${fence}${lang}\n${code}\n${fence}`);
+    } else if (t === 'BLOCKQUOTE') out.push(h2mBlocks(kids).split('\n').map((l) => (l ? '> ' + l : '>')).join('\n'));
+    else if (t === 'UL' || t === 'OL') out.push(h2mList(c));
+    else if (t === 'TABLE') out.push(h2mTable(c));
+    else if (t === 'DETAILS') {
+      const sum = kids.find((k) => k.tagName === 'SUMMARY');
+      const title = sum ? [...sum.childNodes].map(h2mInline).join('').replace(/\\\n/g, ' ').trim() : 'Details';
+      out.push(`<details>\n<summary>${title}</summary>\n\n${h2mBlocks(kids.filter((k) => k !== sum))}\n\n</details>`);
+    } else if (callout) {
+      const kind = { warning: 'warn', danger: 'error' }[callout[1]] || callout[1];
+      out.push(`::: ${kind}\n${h2mBlocks(kids)}\n:::`);
+    } else {
+      const s = h2mBlocks(kids);
+      if (s) out.push(s);
+    }
+  }
+  flush();
+  return out.join('\n\n');
+}
+function h2mList(list) {
+  const ordered = list.tagName === 'OL';
+  let n = parseInt(list.getAttribute('start'), 10) || 1;
+  const items = [];
+  for (const li of list.children) {
+    if (li.tagName !== 'LI') { if (/^(UL|OL)$/.test(li.tagName)) items.push(h2mList(li).replace(/^/gm, '  ')); continue; }
+    // A to-do item: Nextcloud and GitHub mark it on the item, others with a checkbox inside it.
+    const box = li.querySelector('input[type=checkbox]');
+    const ownBox = box && box.closest('li') === li ? box : null;
+    let checked = null;
+    if (li.hasAttribute('data-checked')) checked = li.getAttribute('data-checked') === 'true';
+    else if (/task-list-item|checklist|todo/i.test(li.className)) checked = /\bchecked\b/.test(li.className) || !!(ownBox && (ownBox.checked || ownBox.hasAttribute('checked')));
+    else if (ownBox) checked = ownBox.checked || ownBox.hasAttribute('checked');
+    const marker = checked !== null ? `- [${checked ? 'x' : ' '}]` : ordered ? `${n}.` : '-';
+    n++;
+    const lists = [], rest = [];
+    for (const k of li.childNodes) (k.nodeType === 1 && /^(UL|OL)$/.test(k.tagName) ? lists : rest).push(k);
+    const pad = ' '.repeat(ordered && checked === null ? marker.length + 1 : 2);
+    const text = h2mBlocks(rest).replace(/\n\n+/g, '\\\n').replace(/\n/g, '\n' + pad);
+    let item = `${marker} ${text}`.trimEnd();
+    for (const sub of lists) item += '\n' + h2mList(sub).replace(/^/gm, pad);
+    items.push(item);
+  }
+  return items.join('\n');
+}
+function h2mTable(table) {
+  const rows = [...table.rows].map((r) => [...r.cells].map((c) => h2mBlocks([...c.childNodes]).replace(/\\\n|\n+/g, ' ').trim().replace(/(?<!\\)\|/g, '\\|')));
+  if (!rows.length) return '';
+  const w = Math.max(...rows.map((r) => r.length));
+  for (const r of rows) while (r.length < w) r.push('');
+  const line = (r) => '| ' + r.join(' | ') + ' |';
+  return [line(rows[0]), '|' + ' --- |'.repeat(w), ...rows.slice(1).map(line)].join('\n');
+}
+function htmlToMarkdown(html) {
+  const doc = new DOMParser().parseFromString(html, 'text/html'); // inert: nothing in it runs or loads
+  return h2mBlocks([...doc.body.childNodes]).replace(/\n{3,}/g, '\n\n').trim();
+}
+// Plain text that already reads as Markdown (Nextcloud copies its Markdown as plain text too) is kept as it is.
+const looksLikeMarkdown = (s) => /^\s*(#{1,6}\s|[-*+]\s+\[[ xX]\]|:::|\|.*\||```|>\s)|\*\*\S|\[[^\]\n]+\]\([^)\s]+\)/m.test(s);
 
 // ---------- notes ----------
 let notes = [];       // newest first
@@ -743,14 +984,14 @@ function setNoteEditing(on, focus) {
 function toggleTask(lineNo, checked) {
   const lines = noteBody.value.replace(/\r\n?/g, '\n').split('\n');
   if (!lines[lineNo]) return;
-  lines[lineNo] = lines[lineNo].replace(/^(\s*(?:[-*+]|\d{1,9}[.)])\s+)\[[ xX]\]/, `$1[${checked ? 'x' : ' '}]`);
+  lines[lineNo] = lines[lineNo].replace(/^((?:\s*>)*\s*(?:[-*+]|\d{1,9}[.)])\s+)\[[ xX]\]/, `$1[${checked ? 'x' : ' '}]`);
   noteBody.value = lines.join('\n');
   scheduleSave();
   showNotePreview();
 }
 $('noteMode').addEventListener('click', () => { flushNote(); setNoteEditing(!noteEditing, true); });
 $('notePreview').addEventListener('click', (e) => {
-  if (e.target.closest('a, input, button') || String(getSelection())) return;
+  if (e.target.closest('a, input, button, summary') || String(getSelection())) return;
   setNoteEditing(true, true);
 });
 function fmtWhen(ts) {
@@ -833,6 +1074,20 @@ function scheduleSave() {
 }
 noteTitle.addEventListener('input', scheduleSave);
 noteBody.addEventListener('input', scheduleSave);
+noteBody.addEventListener('paste', (e) => {
+  const cd = e.clipboardData;
+  const html = cd && cd.getData('text/html'), plain = cd ? cd.getData('text/plain') : '';
+  if (!html || looksLikeMarkdown(plain)) return; // plain text, or Markdown already: paste it as it is
+  let md;
+  try { md = htmlToMarkdown(html); } catch { return; }
+  if (!md || md === plain.trim()) return;
+  e.preventDefault();
+  // insertText keeps the paste undoable; setRangeText is the fallback where it isn't supported.
+  if (!document.execCommand('insertText', false, md)) {
+    noteBody.setRangeText(md, noteBody.selectionStart, noteBody.selectionEnd, 'end');
+    scheduleSave();
+  }
+});
 noteTitle.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); noteBody.focus(); } });
 
 async function saveNote(force) {

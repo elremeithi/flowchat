@@ -120,6 +120,23 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .md pre code { background: none; padding: 0; white-space: pre; }
 .md hr { border: 0; border-top: 1px solid var(--line); margin: 18px 0; }
 .md a { color: var(--accent); }
+.md .table-wrap, .md details, .md .callout { margin: 0 0 12px; }
+.md .table-wrap { overflow-x: auto; }
+.md table { border-collapse: collapse; min-width: 50%; overflow-wrap: normal; }
+.md th, .md td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; vertical-align: top; }
+.md th { background: var(--surface-2); font-weight: 600; }
+.md .callout { padding: 10px 14px; border-radius: 10px; border-left: 4px solid #3b82f6; background: rgba(59, 130, 246, .12); }
+.md .callout-success { border-color: #16a34a; background: rgba(22, 163, 74, .12); }
+.md .callout-warn { border-color: #d97706; background: rgba(217, 119, 6, .14); }
+.md .callout-error { border-color: #dc2626; background: rgba(220, 38, 38, .12); }
+.md .callout > :last-child, .md details > :last-child { margin-bottom: 0; }
+.md details { padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; }
+.md details[open] > summary { margin-bottom: 8px; }
+.md summary { cursor: pointer; font-weight: 600; }
+.md mark { background: rgba(250, 204, 21, .45); color: inherit; padding: 0 2px; border-radius: 3px; }
+.md img { max-width: 100%; height: auto; border-radius: 8px; vertical-align: middle; }
+.md .md-file { color: var(--muted); }
+.md pre.front-matter { color: var(--muted); }
 .note-placeholder { flex: 1; display: grid; place-items: center; color: var(--muted); padding: 24px; text-align: center; }
 @media (max-width: 720px) {
   .notes-list-pane { width: 100%; border-right: 0; }
