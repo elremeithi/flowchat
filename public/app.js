@@ -594,6 +594,122 @@ function route() {
 }
 addEventListener('hashchange', route);
 
+// ---------- Markdown, for notes ----------
+// A small renderer that builds page elements directly (never HTML from the note's text), covering
+// what notes need: headings, bold, italic, strikethrough, code, links, quotes, rules, lists and
+// to-do items. onToggle(line, checked) is called when a to-do box is ticked.
+const MD_INLINE = [
+  ['code', /`([^`\n]+)`/],
+  ['link', /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+|mailto:[^\s)]+)\)/],
+  ['strong', /\*\*(?=\S)([^\n]*?\S)\*\*|__(?=\S)([^\n]*?\S)__/],
+  ['del', /~~(?=\S)([^\n]*?\S)~~/],
+  ['em', /\*(?=[^\s*])([^*\n]*?[^\s*])\*|(?<![\w])_(?=[^\s_])([^_\n]*?[^\s_])_(?![\w])/],
+];
+function mdInline(parent, text) {
+  while (text) {
+    let best = null;
+    for (const [kind, re] of MD_INLINE) {
+      const m = re.exec(text);
+      if (m && (!best || m.index < best.m.index)) best = { kind, m };
+    }
+    if (!best) { linkify(parent, text); return; }
+    const { kind, m } = best;
+    linkify(parent, text.slice(0, m.index));
+    if (kind === 'code') parent.append(el('code', null, m[1]));
+    else if (kind === 'link') {
+      const a = el('a');
+      a.href = m[2]; a.target = '_blank'; a.rel = 'noopener noreferrer';
+      mdInline(a, m[1]);
+      parent.append(a);
+    } else {
+      const n = el(kind);
+      mdInline(n, m[1] ?? m[2]);
+      parent.append(n);
+    }
+    text = text.slice(m.index + m[0].length);
+  }
+}
+function renderMarkdown(parent, src, onToggle) {
+  const lines = src.replace(/\r\n?/g, '\n').split('\n');
+  const LIST = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/;
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    let m;
+    if (!line.trim()) { i++; continue; }
+    if ((m = /^\s*(```|~~~)/.exec(line))) {
+      const fence = m[1], code = [];
+      for (i++; i < lines.length && !lines[i].trim().startsWith(fence); i++) code.push(lines[i]);
+      i++;
+      const pre = el('pre');
+      pre.append(el('code', null, code.join('\n')));
+      parent.append(pre);
+    } else if ((m = /^(#{1,6})\s+(.*?)\s*#*\s*$/.exec(line))) {
+      const h = el('h' + Math.min(6, m[1].length + 1)); // one level down: the note's title is the top
+      mdInline(h, m[2]);
+      parent.append(h);
+      i++;
+    } else if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) {
+      parent.append(el('hr'));
+      i++;
+    } else if (/^\s*>/.test(line)) {
+      const inner = [];
+      for (; i < lines.length && /^\s*>/.test(lines[i]); i++) inner.push(lines[i].replace(/^\s*>\s?/, ''));
+      const q = el('blockquote');
+      renderMarkdown(q, inner.join('\n'));
+      parent.append(q);
+    } else if (LIST.test(line)) {
+      // Consecutive list lines; deeper indents make nested lists.
+      const stack = [];
+      for (; i < lines.length && (m = LIST.exec(lines[i])); i++) {
+        const indent = m[1].replace(/\t/g, '    ').length;
+        const ordered = /\d/.test(m[2]);
+        while (stack.length && indent < stack[stack.length - 1].indent) stack.pop();
+        let top = stack[stack.length - 1];
+        if (!top || indent > top.indent || top.ordered !== ordered) {
+          const list = el(ordered ? 'ol' : 'ul');
+          if (ordered && parseInt(m[2], 10) !== 1) list.start = parseInt(m[2], 10);
+          if (top && indent === top.indent) stack.pop(); // same level, other kind of list
+          const holder = stack[stack.length - 1];
+          (holder ? holder.list.lastElementChild : parent).append(list);
+          top = { indent, ordered, list };
+          stack.push(top);
+        }
+        const li = el('li');
+        const task = /^\[([ xX])\]\s+(.*)$/.exec(m[3]);
+        if (task) {
+          li.className = 'task';
+          const box = el('input');
+          box.type = 'checkbox';
+          box.checked = task[1] !== ' ';
+          const lineNo = i;
+          if (onToggle) box.addEventListener('change', () => onToggle(lineNo, box.checked));
+          else box.disabled = true;
+          const label = el('span');
+          mdInline(label, task[2]);
+          if (box.checked) label.className = 'done';
+          const row = el('span', 'task-row'); // keeps any nested list below the item, not beside it
+          row.append(box, label);
+          li.append(row);
+        } else mdInline(li, m[3]);
+        top.list.append(li);
+      }
+    } else {
+      const p = el('p');
+      let first = true;
+      for (; i < lines.length && lines[i].trim() && !/^\s*(```|~~~|#{1,6}\s|>)/.test(lines[i]) && !LIST.test(lines[i]); i++) {
+        if (!first) p.append(el('br'));
+        mdInline(p, lines[i].trim());
+        first = false;
+      }
+      parent.append(p);
+    }
+  }
+}
+// The text of a Markdown line without its markers, for note titles and snippets in the list.
+const mdPlain = (s) => s.replace(/^\s*(#{1,6}\s+|>\s*|[-*+]\s+(\[[ xX]\]\s+)?|\d{1,9}[.)]\s+(\[[ xX]\]\s+)?)/, '')
+  .replace(/\*\*|__|~~|`/g, '').replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+
 // ---------- notes ----------
 let notes = [];       // newest first
 let openId = null;    // note in the editor
@@ -604,9 +720,39 @@ let saveTimer = null;
 const noteTitle = $('noteTitle'), noteBody = $('noteBody');
 
 function noteLabel(n) {
-  const firstLine = (n.body || '').split('\n').find((l) => l.trim()) || '';
-  return { title: n.title || firstLine.trim().slice(0, 80) || 'Untitled', snip: n.title ? firstLine.trim().slice(0, 120) : '' };
+  const firstLine = mdPlain((n.body || '').split('\n').find((l) => mdPlain(l).trim()) || '').trim();
+  return { title: n.title || firstLine.slice(0, 80) || 'Untitled', snip: n.title ? firstLine.slice(0, 120) : '' };
 }
+
+// A note opens showing its formatted Markdown; Edit (or tapping the text) shows the plain text.
+let noteEditing = false;
+function showNotePreview() {
+  const box = $('notePreview');
+  box.textContent = '';
+  if (noteBody.value.trim()) renderMarkdown(box, noteBody.value, toggleTask);
+  else box.append(el('p', 'muted', 'Empty note. Tap to write.'));
+}
+function setNoteEditing(on, focus) {
+  noteEditing = on;
+  noteBody.hidden = !on;
+  $('notePreview').hidden = on;
+  $('noteMode').textContent = on ? 'Done' : 'Edit';
+  if (!on) showNotePreview();
+  else if (focus) noteBody.focus();
+}
+function toggleTask(lineNo, checked) {
+  const lines = noteBody.value.replace(/\r\n?/g, '\n').split('\n');
+  if (!lines[lineNo]) return;
+  lines[lineNo] = lines[lineNo].replace(/^(\s*(?:[-*+]|\d{1,9}[.)])\s+)\[[ xX]\]/, `$1[${checked ? 'x' : ' '}]`);
+  noteBody.value = lines.join('\n');
+  scheduleSave();
+  showNotePreview();
+}
+$('noteMode').addEventListener('click', () => { flushNote(); setNoteEditing(!noteEditing, true); });
+$('notePreview').addEventListener('click', (e) => {
+  if (e.target.closest('a, input, button') || String(getSelection())) return;
+  setNoteEditing(true, true);
+});
 function fmtWhen(ts) {
   const d = new Date(ts);
   return new Date().toDateString() === d.toDateString() ? fmtTime(ts)
@@ -654,12 +800,18 @@ function fillEditor(n) {
   dirty = false;
   $('noteConflict').hidden = true;
   noteState(`Saved ${fmtWhen(n.updated)} · ${n.by}`);
+  if (!noteEditing) showNotePreview();
 }
 function openNote(id) {
   if (id !== openId) flushNote();
   const n = notes.find((x) => x.id === id);
   if (!n) { if (notes.length || !me) location.replace('#notes'); return; }
-  if (id !== openId) { openId = id; fillEditor(n); }
+  if (id !== openId) {
+    openId = id;
+    noteEditing = !n.body.trim(); // a new or empty note opens ready to write
+    fillEditor(n);
+    setNoteEditing(noteEditing);
+  }
   $('noteEditor').hidden = false;
   $('notePlaceholder').hidden = true;
   $('notesView').classList.add('editing');

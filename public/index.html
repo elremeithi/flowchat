@@ -92,6 +92,7 @@
       <div class="editor-bar">
         <a id="noteBack" class="ghost back" href="#notes">‹ Notes</a>
         <span id="noteState" class="note-state" aria-live="polite"></span>
+        <button id="noteMode" type="button" class="ghost">Edit</button>
         <button id="noteDelete" type="button" class="ghost">Delete</button>
       </div>
       <div id="noteConflict" class="conflict" role="alert" hidden>
@@ -102,7 +103,8 @@
         </span>
       </div>
       <input id="noteTitle" class="note-title" type="text" maxlength="200" placeholder="Title" aria-label="Note title" autocomplete="off">
-      <textarea id="noteBody" class="note-body" placeholder="Start writing" aria-label="Note text"></textarea>
+      <textarea id="noteBody" class="note-body" placeholder="Start writing. Markdown works: # heading, **bold**, - list, - [ ] to-do" aria-label="Note text"></textarea>
+      <div id="notePreview" class="note-preview md" hidden></div>
     </div>
     <div id="notePlaceholder" class="note-placeholder">
       <p>Pick a note on the left, or start a new one.</p>
