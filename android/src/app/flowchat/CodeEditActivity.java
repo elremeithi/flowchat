@@ -361,5 +361,6 @@ public final class CodeEditActivity extends Activity {
     protected void onResume() {
         super.onResume();
         Secure.apply(this);
+        if (CodeLock.locked(this)) finish(); // the list underneath asks for the PIN
     }
 }

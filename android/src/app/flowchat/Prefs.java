@@ -52,6 +52,15 @@ final class Prefs {
         p(c).edit().putBoolean("blockScreenshots", value).apply();
     }
 
+    /** "salt:hash" of the PIN asked for before QR codes are shown, or "" when none is set. */
+    static String codesLock(Context c) {
+        return p(c).getString("codesLock", "");
+    }
+
+    static void setCodesLock(Context c, String value) {
+        p(c).edit().putString("codesLock", value == null ? "" : value).apply();
+    }
+
     /** Time of the newest message already seen, so nothing is announced twice. 0 = never connected. */
     static long lastTs(Context c) {
         return p(c).getLong("lastTs", 0);

@@ -239,6 +239,12 @@ dialog form { display: flex; justify-content: flex-end; margin-top: 16px; }
 
 /* QR codes: a grid of cards */
 .codes-scroll { flex: 1; overflow-y: auto; }
+.codes-lock { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px 16px 12vh; text-align: center; color: var(--ink); }
+.codes-lock[hidden], .codes-scroll[hidden] { display: none; }
+.codes-lock svg { color: var(--muted); }
+.codes-lock input { width: 9ch; padding: 10px 12px; font-size: 26px; letter-spacing: .5em; text-indent: .5em; text-align: center; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink); }
+.codes-lock .primary { min-width: 140px; }
+.codes-lock .muted { max-width: 36ch; }
 .codes-column { padding-block: 16px 28px; display: flex; flex-direction: column; gap: 14px; }
 .codes-tools { display: flex; gap: 8px; }
 .codes-tools input { flex: 1; min-width: 0; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }

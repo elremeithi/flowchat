@@ -35,6 +35,8 @@ public final class CodesActivity extends Activity implements CodeStore.Listener 
     private EditText search;
     private TextView status;
     private TextView empty;
+    private View root;
+    private boolean asking;
 
     @Override
     protected void onCreate(Bundle saved) {
@@ -120,6 +122,8 @@ public final class CodesActivity extends Activity implements CodeStore.Listener 
             }
         });
         col.addView(grid, new LinearLayout.LayoutParams(-1, 0, 1));
+        root = col;
+        root.setVisibility(CodeLock.locked(this) ? View.INVISIBLE : View.VISIBLE);
         setContentView(col);
 
         search.addTextChangedListener(new TextWatcher() {
@@ -152,10 +156,30 @@ public final class CodesActivity extends Activity implements CodeStore.Listener 
             Secure.apply(this);
             store.addListener(this);
             refresh();
+            guard();
             store.sync();
         } catch (Throwable e) {
             failed(e);
         }
+    }
+
+    /** Hides the codes and asks for the PIN, when one is set and not yet entered since the app started. */
+    private void guard() {
+        if (!CodeLock.locked(this)) {
+            root.setVisibility(View.VISIBLE);
+            return;
+        }
+        root.setVisibility(View.INVISIBLE);
+        if (asking) return;
+        asking = true;
+        CodeLock.ask(this, new Runnable() {
+            @Override
+            public void run() {
+                asking = false;
+                root.setVisibility(View.VISIBLE);
+                refresh();
+            }
+        }, null);
     }
 
     @Override
@@ -167,6 +191,7 @@ public final class CodesActivity extends Activity implements CodeStore.Listener 
     @Override
     public void onChanged() {
         refresh();
+        guard(); // a sync may have brought a new PIN
     }
 
     static List<CodeSync.Code> filter(List<CodeSync.Code> all, String query) {

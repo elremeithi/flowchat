@@ -112,7 +112,15 @@
   </section>
 
   <section id="codesView" class="view codes" role="tabpanel" aria-labelledby="tabCodes" hidden>
-    <div class="codes-scroll">
+    <form id="codesLock" class="codes-lock" hidden>
+      <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></svg>
+      <label for="codesPin"><strong>Enter your PIN to see your QR codes</strong></label>
+      <input id="codesPin" type="password" inputmode="numeric" autocomplete="off" maxlength="4" pattern="[0-9]{4}" aria-describedby="codesPinError">
+      <p id="codesPinError" class="error" role="alert" hidden></p>
+      <button type="submit" class="primary">Unlock</button>
+      <p class="muted small">Asked once each time Flowchat is opened. Forgot it? Change it in the container settings on your server (CODES_PIN).</p>
+    </form>
+    <div id="codesScroll" class="codes-scroll">
       <div class="column codes-column">
         <div class="codes-tools">
           <input id="codeSearch" type="search" placeholder="Search codes" aria-label="Search codes" autocomplete="off">

@@ -384,6 +384,23 @@ public final class MainActivity extends Activity {
             }
         }
 
+        /** The page passes on the server's QR code PIN ("salt:hash", or "" for none). */
+        @JavascriptInterface
+        public void setCodesLock(String lock) {
+            Prefs.setCodesLock(MainActivity.this, lock);
+        }
+
+        /** Whether the PIN was entered since the app was started, on the page or the app's own screens. */
+        @JavascriptInterface
+        public boolean codesUnlocked(String hash) {
+            return CodeLock.unlockedFor(hash);
+        }
+
+        @JavascriptInterface
+        public void unlockCodes(String hash) {
+            CodeLock.unlock(MainActivity.this, hash);
+        }
+
         @JavascriptInterface
         public void openCodes() {
             runOnUiThread(new Runnable() {

@@ -198,7 +198,8 @@ final class CodeStore {
             work = data.copy();
             before = data.revisions();
         }
-        CodeSync.Outcome outcome = work.sync(new Api(server, cookie), new Runnable() {
+        Api api = new Api(server, cookie);
+        CodeSync.Outcome outcome = work.sync(api, new Runnable() {
             @Override
             public void run() {
                 // saved once below, together with any changes made meanwhile
@@ -212,6 +213,7 @@ final class CodeStore {
             }
             problem = data.problem;
         }
+        if (api.codesLock != null) Prefs.setCodesLock(app, api.codesLock);
         changed();
         switch (outcome) {
             case SYNCED:

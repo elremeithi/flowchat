@@ -55,6 +55,8 @@ public final class Api {
     private final String cookie;
     private volatile HttpURLConnection stream;
     private volatile boolean closed;
+    /** After {@link #listCodes}: the server's PIN lock as "salt:hash", "" for none, null if not sent. */
+    public volatile String codesLock;
 
     /** @param base a normalized server address such as https://flow.example.com */
     public Api(String base, String cookie) {
@@ -212,7 +214,14 @@ public final class Api {
 
     /** All QR codes on the server. Throws HttpError 404 when the server is too old to have them. */
     public JSONArray listCodes() throws IOException {
-        JSONArray list = finish(open("/api/codes", "GET")).optJSONArray("codes");
+        JSONObject o = finish(open("/api/codes", "GET"));
+        if (o.has("lock")) {
+            JSONObject lock = o.optJSONObject("lock");
+            codesLock = lock == null ? "" : lock.optString("salt") + ":" + lock.optString("hash");
+        } else {
+            codesLock = ""; // a server older than 1.12 has no PIN
+        }
+        JSONArray list = o.optJSONArray("codes");
         return list == null ? new JSONArray() : list;
     }
 

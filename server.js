@@ -22,7 +22,7 @@ const ALLOWED_HOSTS = (process.env.ALLOWED_HOSTS || '').split(',').map((h) => h.
 const RETENTION_MS = (Number(process.env.RETENTION_DAYS) || 0) * 86400e3;
 const PUBLIC = path.join(__dirname, 'public');
 // Shown in Settings (browser and app) so it is easy to tell whether a server is up to date.
-const SERVER_VERSION = '1.11.0';
+const SERVER_VERSION = '1.12.0';
 
 // `node server.js --totp-new` prints a fresh two-step sign-in secret and exits.
 if (process.argv.includes('--totp-new')) {
@@ -62,6 +62,17 @@ if (PASSWORD.length < 12) console.warn('Warning: APP_PASSWORD is shorter than 12
 const sha = (s) => crypto.createHash('sha256').update(s).digest();
 const PASS_HASH = sha(PASSWORD);
 const passwordOk = (p) => typeof p === 'string' && crypto.timingSafeEqual(sha(p), PASS_HASH);
+
+// ---------- PIN for the QR codes page ----------
+// A privacy lock, not encryption: every signed-in device gets the salted hash so it can check the
+// PIN without a connection, and asks for it once each time the app or browser tab is opened.
+let CODES_LOCK = null;
+const CODES_PIN = (process.env.CODES_PIN || '').trim();
+if (CODES_PIN && !/^\d{4}$/.test(CODES_PIN)) console.warn('Warning: CODES_PIN must be exactly 4 digits. The QR codes page is not locked.');
+else if (CODES_PIN) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  CODES_LOCK = { salt, hash: sha(`${salt}:${CODES_PIN}`).toString('hex') };
+}
 
 // ---------- two-step sign-in (TOTP, RFC 6238) ----------
 let TOTP_KEY = null;
@@ -690,7 +701,7 @@ async function handle(req, res) {
     return json(res, 200, { ok: true }, { 'Set-Cookie': cookieHeader(req, 'x', 0), 'Clear-Site-Data': '"cache", "storage"' });
   }
   if (p === '/api/me' && method === 'GET') {
-    return json(res, 200, { device: sess.device, sid: sess.id, maxUploadMb: MAX_UPLOAD_MB, version: SERVER_VERSION });
+    return json(res, 200, { device: sess.device, sid: sess.id, maxUploadMb: MAX_UPLOAD_MB, version: SERVER_VERSION, codesLock: CODES_LOCK });
   }
   if (p === '/api/messages' && method === 'GET') {
     const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 100, 1), 500);
@@ -780,7 +791,7 @@ async function handle(req, res) {
     return json(res, 200, { ok: true });
   }
   if (p === '/api/codes' && method === 'GET') {
-    return json(res, 200, { codes: liveCodes() });
+    return json(res, 200, { codes: liveCodes(), lock: CODES_LOCK });
   }
   if (p === '/api/codes/removed' && method === 'GET') {
     const list = [...codes.values()].filter((c) => c.removed).sort((a, b) => b.removed - a.removed)

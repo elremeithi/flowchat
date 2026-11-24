@@ -80,6 +80,7 @@ With the Compose Manager plugin you can use `docker-compose.yml` instead: copy
 | `OLD_APP_PASSWORD` | unset | Only when changing the password: the previous one, for one start. See Security. |
 | `ENCRYPTION_KEY` | unset | Only for upgrading data from an older version that used it, for one start. |
 | `TOTP_SECRET` | off | Adds a 6-digit authenticator code to sign-in. |
+| `CODES_PIN` | off | A 4-digit PIN asked for once each time the app or browser tab is opened, before QR codes are shown. Change or clear it here if forgotten. It keeps codes from casual view on an unlocked phone; it is not encryption. |
 | `REQUIRE_HTTPS` | `0` | `1` refuses plain HTTP. Use it behind an HTTPS proxy. |
 | `ALLOWED_HOSTS` | any | Comma-separated addresses the app answers on. |
 | `RETENTION_DAYS` | `0` | Auto-delete messages and files older than this. `0` keeps everything. |

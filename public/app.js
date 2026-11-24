@@ -580,7 +580,8 @@ function route() {
   $('tabChat').setAttribute('aria-selected', tab === 'chat');
   $('tabNotes').setAttribute('aria-selected', tab === 'notes');
   $('tabCodes').setAttribute('aria-selected', tab === 'codes');
-  if (codeMatch) showCode(codeMatch[1]); else hideCode();
+  if (codeMatch && codesLocked()) { hideCode(); history.replaceState(null, '', '#codes'); }
+  else if (codeMatch) showCode(codeMatch[1]); else hideCode();
   if (tab === 'codes') {
     renderCodes();
   } else if (tab === 'chat') {
@@ -1457,6 +1458,14 @@ async function copyText(value) {
 const codeSummary = (c) => (c.kind === 'image' ? 'Picture' : c.content.replace(/\s+/g, ' ').slice(0, 60));
 
 function renderCodes() {
+  const locked = codesLocked();
+  $('codesLock').hidden = !locked;
+  $('codesScroll').hidden = locked;
+  if (locked) {
+    $('codeGrid').textContent = '';
+    if (tab === 'codes' && document.activeElement !== $('codesPin')) $('codesPin').focus();
+    return;
+  }
   const q = $('codeSearch').value.trim().toLowerCase();
   const shown = q ? codes.filter((c) => (c.title + ' ' + (c.content || '')).toLowerCase().includes(q)) : codes;
   const grid = $('codeGrid');
@@ -1496,6 +1505,7 @@ $('codeSearch').addEventListener('input', renderCodes);
 
 async function loadCodes() {
   const data = await api('GET', '/api/codes');
+  if ('lock' in data) setCodesLock(data.lock);
   codes = data.codes.sort(byTitle);
   saveCodeCache();
   if (tab === 'codes') renderCodes();
@@ -1536,6 +1546,98 @@ $('codesOffline').checked = offlineWanted();
 $('codesOffline').addEventListener('change', (e) => {
   stored('flow_codes_offline', e.target.checked ? '1' : '0');
   saveCodeCache();
+});
+
+// ----- the PIN asked for before codes are shown (CODES_PIN on the server) -----
+// A privacy lock for an unlocked phone or computer, not encryption: the server hands every
+// signed-in device a salted hash, so the PIN can be checked without a connection. Once entered,
+// it holds until the browser tab or the app is closed (in the Android app, for its own QR
+// screens too).
+let codesLock = null; // { salt, hash }, or null when no PIN is set
+let unlockedHash = '';
+let pinFails = 0, pinWaitUntil = 0;
+function sha256Hex(text) {
+  const rot = (v, n) => (v >>> n) | (v << (32 - n));
+  const H = [], K = [];
+  for (let c = 2, n = 0; n < 64; c++) {
+    let prime = true;
+    for (let d = 2; d * d <= c; d++) if (c % d === 0) { prime = false; break; }
+    if (!prime) continue;
+    if (n < 8) H[n] = (Math.sqrt(c) * 2 ** 32) | 0;
+    K[n++] = (Math.cbrt(c) * 2 ** 32) | 0;
+  }
+  const bytes = [...new TextEncoder().encode(text)];
+  const bits = bytes.length * 8;
+  bytes.push(0x80);
+  while (bytes.length % 64 !== 56) bytes.push(0);
+  for (let i = 7; i >= 0; i--) bytes.push(i > 3 ? 0 : (bits >>> (i * 8)) & 255);
+  const w = new Array(64);
+  for (let off = 0; off < bytes.length; off += 64) {
+    for (let i = 0; i < 16; i++) w[i] = (bytes[off + 4 * i] << 24) | (bytes[off + 4 * i + 1] << 16) | (bytes[off + 4 * i + 2] << 8) | bytes[off + 4 * i + 3];
+    for (let i = 16; i < 64; i++) {
+      const a = w[i - 15], b = w[i - 2];
+      w[i] = (w[i - 16] + (rot(a, 7) ^ rot(a, 18) ^ (a >>> 3)) + w[i - 7] + (rot(b, 17) ^ rot(b, 19) ^ (b >>> 10))) | 0;
+    }
+    let [a, b, c, d, e, f, g, h] = H;
+    for (let i = 0; i < 64; i++) {
+      const t1 = (h + (rot(e, 6) ^ rot(e, 11) ^ rot(e, 25)) + ((e & f) ^ (~e & g)) + K[i] + w[i]) | 0;
+      const t2 = ((rot(a, 2) ^ rot(a, 13) ^ rot(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) | 0;
+      h = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+    }
+    [a, b, c, d, e, f, g, h].forEach((v, i) => { H[i] = (H[i] + v) | 0; });
+  }
+  return H.map((v) => (v >>> 0).toString(16).padStart(8, '0')).join('');
+}
+function setCodesLock(lock) {
+  codesLock = lock && lock.salt && lock.hash ? { salt: String(lock.salt), hash: String(lock.hash) } : null;
+  // Kept on this device too, so the copy shown without a connection stays locked.
+  try {
+    if (codesLock && !nativeCodes) localStorage.setItem('flow_codes_lock', JSON.stringify(codesLock));
+    else localStorage.removeItem('flow_codes_lock');
+  } catch {}
+  try { if (androidApp && androidApp.setCodesLock) androidApp.setCodesLock(codesLock ? `${codesLock.salt}:${codesLock.hash}` : ''); } catch {}
+  if (tab === 'codes') renderCodes();
+  if (showing && codesLocked()) location.replace('#codes');
+}
+function cachedCodesLock() {
+  try { return JSON.parse(localStorage.getItem('flow_codes_lock')); } catch { return null; }
+}
+function codesLocked() {
+  if (!codesLock) return false;
+  if (unlockedHash === codesLock.hash) return false;
+  try { if (sessionStorage.getItem('flow_codes_unlocked') === codesLock.hash) return false; } catch {}
+  try { if (androidApp && androidApp.codesUnlocked && androidApp.codesUnlocked(codesLock.hash)) return false; } catch {}
+  return true;
+}
+function pinError(msg) {
+  $('codesPinError').textContent = msg;
+  $('codesPinError').hidden = !msg;
+}
+$('codesLock').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const input = $('codesPin');
+  if (!codesLock) return renderCodes();
+  const wait = Math.ceil((pinWaitUntil - Date.now()) / 1000);
+  if (wait > 0) { input.value = ''; return pinError(`Too many wrong tries. Try again in ${wait} second${wait === 1 ? '' : 's'}.`); }
+  if (!/^\d{4}$/.test(input.value)) return pinError('Enter the 4 digits of your PIN.');
+  if (sha256Hex(`${codesLock.salt}:${input.value}`) !== codesLock.hash) {
+    input.value = '';
+    pinFails++;
+    if (pinFails >= 5) pinWaitUntil = Date.now() + Math.min(30e3 * 2 ** (pinFails - 5), 600e3);
+    return pinError(pinFails >= 5 ? `Wrong PIN. Try again in ${Math.ceil((pinWaitUntil - Date.now()) / 1000)} seconds.` : 'Wrong PIN.');
+  }
+  pinFails = 0;
+  unlockedHash = codesLock.hash;
+  try { sessionStorage.setItem('flow_codes_unlocked', codesLock.hash); } catch {}
+  try { if (androidApp && androidApp.unlockCodes) androidApp.unlockCodes(codesLock.hash); } catch {}
+  input.value = '';
+  pinError('');
+  input.blur();
+  renderCodes();
+});
+$('codesPin').addEventListener('input', (e) => {
+  e.target.value = e.target.value.replace(/\D/g, '').slice(0, 4);
+  if (e.target.value.length === 4) $('codesLock').requestSubmit();
 });
 
 // ----- showing a code full screen -----
@@ -1767,6 +1869,7 @@ function startOffline() {
   offline = true;
   me = null;
   codes = cachedCodes();
+  codesLock = nativeCodes ? null : cachedCodesLock();
   $('login').hidden = true;
   $('app').hidden = false;
   $('app').classList.add('offline');
@@ -1798,6 +1901,7 @@ async function start() {
   $('login').hidden = true;
   $('app').hidden = false;
   if (nativeCodes) forgetCodeCache();
+  setCodesLock(me.codesLock);
   text.value = stored('flow_draft') || '';
   autosize();
   await Promise.all([loadLatest(), loadNotes(), loadCodes()]);

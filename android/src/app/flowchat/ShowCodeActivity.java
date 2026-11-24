@@ -152,6 +152,10 @@ public final class ShowCodeActivity extends Activity implements CodeStore.Listen
     protected void onResume() {
         super.onResume();
         Secure.apply(this);
+        if (CodeLock.locked(this)) { // the list underneath asks for the PIN
+            finish();
+            return;
+        }
         store.addListener(this);
         render();
     }
@@ -164,6 +168,10 @@ public final class ShowCodeActivity extends Activity implements CodeStore.Listen
 
     @Override
     public void onChanged() {
+        if (CodeLock.locked(this)) {
+            finish();
+            return;
+        }
         render();
     }
 
