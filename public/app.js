@@ -614,6 +614,20 @@ const MD_INLINE = [
   ['em', /\*(?=[^\s*])([^*\n]*?[^\s*])\*|(?<![\w\\])_(?=[^\s_])([^_\n]*?[^\s_\\])_(?![\w])/],
 ];
 const webUrl = (u) => /^(https?:|mailto:)/i.test(u);
+// Something shown as text but kept exactly as written (data-md), so editing the note never changes it.
+function mdAtom(cls, text, md) {
+  const s = el('span', 'md-atom ' + cls, text);
+  s.dataset.md = md;
+  s.contentEditable = 'false';
+  return s;
+}
+// A to-do is a list item marked data-checked; its box is drawn by the page's styles, so the text
+// stays plain and editable.
+function makeTask(li, checked) {
+  li.classList.add('task');
+  li.dataset.checked = checked;
+  return li;
+}
 function mdInline(parent, text) {
   while (text) {
     let best = null;
@@ -624,14 +638,14 @@ function mdInline(parent, text) {
     if (!best) { linkify(parent, text); return; }
     const { kind, m } = best;
     linkify(parent, text.slice(0, m.index));
-    if (kind === 'esc') parent.append(m[1]);
+    if (kind === 'esc') parent.append(el('span', 'md-esc', m[1])); // marked so editing keeps the backslash
     else if (kind === 'code') parent.append(el('code', null, m[2].replace(/^ (.*) $/, '$1')));
     else if (kind === 'img') {
       if (/^https?:/i.test(m[2])) {
         const img = el('img');
         img.src = m[2]; img.alt = m[1]; img.loading = 'lazy'; img.referrerPolicy = 'no-referrer';
         parent.append(img);
-      } else parent.append(el('span', 'md-file', `🖼 ${m[1] || m[2].split('/').pop()}`)); // a file kept in Nextcloud
+      } else parent.append(mdAtom('md-file', `🖼 ${m[1] || m[2].split('/').pop()}`, m[0])); // a file kept in Nextcloud
     } else if (kind === 'link' || kind === 'auto') {
       const url = kind === 'auto' ? m[1] : m[2];
       if (webUrl(url)) {
@@ -639,7 +653,7 @@ function mdInline(parent, text) {
         a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
         if (kind === 'auto') a.textContent = url; else mdInline(a, m[1]);
         parent.append(a);
-      } else mdInline(parent, m[1]); // a link into Nextcloud only works there; keep its text
+      } else parent.append(mdAtom('md-link', m[1].replace(/\\(.)/g, '$1'), m[0])); // a link into Nextcloud only works there
     } else {
       const n = el(kind);
       mdInline(n, m[1] ?? m[2]);
@@ -662,21 +676,11 @@ function mdBlockEnd(lines, i, open, close) {
   }
   return lines.length;
 }
-function mdTask(li, text, lineNo, onToggle) {
+function mdTask(li, text) {
   const task = /^\[([ xX])\](?:\s+(.*))?$/.exec(text);
   if (!task) return false;
-  li.className = 'task';
-  const box = el('input');
-  box.type = 'checkbox';
-  box.checked = task[1] !== ' ';
-  if (onToggle) box.addEventListener('change', () => onToggle(lineNo, box.checked));
-  else box.disabled = true;
-  const label = el('span');
-  mdInline(label, task[2] || '');
-  if (box.checked) label.className = 'done';
-  const row = el('span', 'task-row'); // keeps any nested list below the item, not beside it
-  row.append(box, label);
-  li.append(row);
+  makeTask(li, task[1] !== ' ');
+  if (task[2]) mdInline(li, task[2]); else li.append(el('br'));
   return true;
 }
 // One line of a paragraph: a trailing backslash or two spaces is a line break, as in Nextcloud.
@@ -698,12 +702,12 @@ function renderMarkdown(parent, src, onToggle, offset = 0) {
     const line = lines[i];
     let m;
     if (!line.trim()) { i++; continue; }
-    if ((m = /^\s*(`{3,}|~{3,})/.exec(line))) {
+    if ((m = /^\s*(`{3,}|~{3,})\s*([^\s`]*)/.exec(line))) {
       const fence = m[1], code = [];
       for (i++; i < lines.length && !lines[i].trim().startsWith(fence); i++) code.push(lines[i]);
       i++;
       const pre = el('pre');
-      pre.append(el('code', null, code.join('\n')));
+      pre.append(el('code', m[2] ? `language-${m[2]}` : null, code.join('\n')));
       parent.append(pre);
     } else if ((m = /^\s*:::\s*(\w+)\s*(.*)$/.exec(line))) {
       // Nextcloud callouts (::: info, success, warn, error) and ::: details Summary
@@ -732,6 +736,7 @@ function renderMarkdown(parent, src, onToggle, offset = 0) {
       i = end + 1;
     } else if ((m = /^\s{0,3}(#{1,6})\s+(.*?)(\s+#+)?\s*$/.exec(line))) {
       const h = el('h' + Math.min(6, m[1].length + 1)); // one level down: the note's title is the top
+      h.dataset.level = m[1].length;
       mdInline(h, m[2]);
       parent.append(h);
       i++;
@@ -778,7 +783,7 @@ function renderMarkdown(parent, src, onToggle, offset = 0) {
         if (!(m = MD_LIST.exec(lines[i]))) {
           if (li && /^\s{2,}\S/.test(lines[i]) && !MD_BLOCK_START.test(lines[i])) {
             li.append(el('br'));
-            mdInline(li.querySelector(':scope > .task-row > span') || li, mdLine(lines[i]));
+            mdInline(li, mdLine(lines[i]));
             i++;
             continue;
           }
@@ -798,7 +803,7 @@ function renderMarkdown(parent, src, onToggle, offset = 0) {
           stack.push(top);
         }
         li = el('li');
-        if (!mdTask(li, m[3].replace(/(\\| {2,})$/, ''), offset + i, onToggle)) mdInline(li, mdLine(m[3]));
+        if (!mdTask(li, m[3].replace(/(\\| {2,})$/, ''))) mdInline(li, mdLine(m[3]));
         top.list.append(li);
         i++;
       }
@@ -826,7 +831,9 @@ const mdPlain = (s) => s.replace(/^\s*(#{1,6}\s+|>\s*|:::\s*\w*\s*|[-*+]\s+(\[[ 
 // Markdown written the way Nextcloud writes it, so a note pasted from Nextcloud keeps its formatting.
 const H2M_BLOCK = /^(P|DIV|H[1-6]|UL|OL|LI|BLOCKQUOTE|PRE|HR|TABLE|THEAD|TBODY|TR|DETAILS|SUMMARY|SECTION|ARTICLE|HEADER|FOOTER|FIGURE|MAIN|NAV|ASIDE|DL|DT|DD|ADDRESS)$/;
 const H2M_SKIP = /^(SCRIPT|STYLE|META|LINK|TITLE|HEAD|TEMPLATE|NOSCRIPT|SVG|BUTTON|INPUT|SELECT|TEXTAREA|IFRAME|OBJECT)$/;
-const h2mEsc = (s) => s.replace(/[\\`*~[\]]|(?<!\w)_|_(?!\w)|==/g, (c) => '\\' + c.split('').join('\\'));
+// In raw mode (reading the note editor) text is kept as typed, so Markdown typed into it stays Markdown.
+let h2mRaw = false;
+const h2mEsc = (s) => h2mRaw ? s.replace(/ /g, ' ') : s.replace(/[\\`*~[\]]|(?<!\w)_|_(?!\w)|==/g, (c) => '\\' + c.split('').join('\\'));
 function h2mWrap(mark, s) {
   const m = /^(\s*)([\s\S]*?)(\s*)$/.exec(s);
   return m[2] ? m[1] + mark + m[2] + mark + m[3] : s;
@@ -834,8 +841,10 @@ function h2mWrap(mark, s) {
 function h2mInline(n) {
   if (n.nodeType === 3) return h2mEsc(n.nodeValue.replace(/[ \t\r\n\f]+/g, ' '));
   if (n.nodeType !== 1 || H2M_SKIP.test(n.tagName)) return '';
+  if (n.dataset && n.dataset.md != null) return n.dataset.md;
   const t = n.tagName, inner = () => [...n.childNodes].map(h2mInline).join('');
   const st = n.style || {};
+  if (h2mRaw && n.classList.contains('md-esc')) { const s = n.textContent; return s ? '\\' + s : ''; }
   switch (t) {
     case 'BR': return '\\\n';
     case 'STRONG': return h2mWrap('**', inner());
@@ -853,6 +862,7 @@ function h2mInline(n) {
     case 'A': {
       const href = n.getAttribute('href') || '', text = inner();
       if (!href || href.startsWith('#') || /^javascript:/i.test(href)) return text;
+      if (n.textContent.trim() === href) return href; // a bare address
       return text.trim() ? `[${text.trim()}](${href.replace(/[ ()]/g, encodeURIComponent)})` : `<${href}>`;
     }
     case 'IMG': {
@@ -875,7 +885,7 @@ function h2mBlocks(nodes) {
   let para = '';
   const flush = () => {
     const t = para.replace(/[ \t]+$/gm, '').replace(/^[ \t]+/gm, '').replace(/(\\\n)+$/, '').trim();
-    if (t) out.push(h2mLineStart(t));
+    if (t) out.push(h2mRaw ? t : h2mLineStart(t));
     para = '';
   };
   for (const c of nodes) {
@@ -884,12 +894,14 @@ function h2mBlocks(nodes) {
     flush();
     const t = c.tagName, kids = [...c.childNodes];
     const callout = /\bcallout--?(info|success|warn|warning|error|danger)\b/.exec(c.className || '');
-    if (/^H[1-6]$/.test(t)) {
+    if (c.dataset && c.dataset.md != null) out.push(c.dataset.md);
+    else if (/^H[1-6]$/.test(t)) {
       const text = [...c.childNodes].map(h2mInline).join('').replace(/\\\n/g, ' ').trim();
-      if (text) out.push('#'.repeat(+t[1]) + ' ' + text);
+      if (text) out.push('#'.repeat(+(c.dataset.level || t[1])) + ' ' + text);
     } else if (t === 'HR') out.push('---');
+    else if (t === 'PRE' && c.classList.contains('front-matter')) out.push(`---\n${c.textContent.replace(/\n$/, '')}\n---`);
     else if (t === 'PRE') {
-      const code = c.textContent.replace(/\n$/, '');
+      const code = (h2mRaw ? c.innerText : c.textContent).replace(/\n$/, '');
       const lang = (/(?:language|lang)-(\S+)/.exec((c.querySelector('code') || c).className) || [])[1] || '';
       const fence = code.includes('```') ? '~~~' : '```';
       out.push(`${fence}${lang}\n${code}\n${fence}`);
@@ -922,7 +934,7 @@ function h2mList(list) {
     const ownBox = box && box.closest('li') === li ? box : null;
     let checked = null;
     if (li.hasAttribute('data-checked')) checked = li.getAttribute('data-checked') === 'true';
-    else if (/task-list-item|checklist|todo/i.test(li.className)) checked = /\bchecked\b/.test(li.className) || !!(ownBox && (ownBox.checked || ownBox.hasAttribute('checked')));
+    else if (/task-list-item|checklist|todo|\btask\b/i.test(li.className)) checked = /\bchecked\b/.test(li.className) || !!(ownBox && (ownBox.checked || ownBox.hasAttribute('checked')));
     else if (ownBox) checked = ownBox.checked || ownBox.hasAttribute('checked');
     const marker = checked !== null ? `- [${checked ? 'x' : ' '}]` : ordered ? `${n}.` : '-';
     n++;
@@ -930,7 +942,7 @@ function h2mList(list) {
     for (const k of li.childNodes) (k.nodeType === 1 && /^(UL|OL)$/.test(k.tagName) ? lists : rest).push(k);
     const pad = ' '.repeat(ordered && checked === null ? marker.length + 1 : 2);
     const text = h2mBlocks(rest).replace(/\n\n+/g, '\\\n').replace(/\n/g, '\n' + pad);
-    let item = `${marker} ${text}`.trimEnd();
+    let item = text.trim() ? `${marker} ${text}`.trimEnd() : `${marker} `;
     for (const sub of lists) item += '\n' + h2mList(sub).replace(/^/gm, pad);
     items.push(item);
   }
@@ -942,7 +954,12 @@ function h2mTable(table) {
   const w = Math.max(...rows.map((r) => r.length));
   for (const r of rows) while (r.length < w) r.push('');
   const line = (r) => '| ' + r.join(' | ') + ' |';
-  return [line(rows[0]), '|' + ' --- |'.repeat(w), ...rows.slice(1).map(line)].join('\n');
+  const head = table.rows[0].cells;
+  const sep = Array.from({ length: w }, (_, k) => {
+    const a = head[k] && head[k].style.textAlign;
+    return a === 'center' ? ':---:' : a === 'right' ? '---:' : a === 'left' ? ':---' : '---';
+  });
+  return [line(rows[0]), line(sep), ...rows.slice(1).map(line)].join('\n');
 }
 function htmlToMarkdown(html) {
   const doc = new DOMParser().parseFromString(html, 'text/html'); // inert: nothing in it runs or loads
@@ -965,34 +982,265 @@ function noteLabel(n) {
   return { title: n.title || firstLine.slice(0, 80) || 'Untitled', snip: n.title ? firstLine.slice(0, 120) : '' };
 }
 
-// A note opens showing its formatted Markdown; Edit (or tapping the text) shows the plain text.
-let noteEditing = false;
-function showNotePreview() {
-  const box = $('notePreview');
-  box.textContent = '';
-  if (noteBody.value.trim()) renderMarkdown(box, noteBody.value, toggleTask);
-  else box.append(el('p', 'muted', 'Empty note. Tap to write.'));
+// The note is edited in its formatted form, as in Nextcloud's Text editor. Its Markdown lives in the
+// hidden #noteBody, rebuilt from the formatted text after every change; that is what gets saved.
+const noteView = $('notePreview');
+const noop = () => {};
+try { document.execCommand('defaultParagraphSeparator', false, 'p'); } catch {}
+
+function caretOffset() { // characters of text before the caret, or -1 when it's not in the note
+  const sel = getSelection();
+  if (!sel.rangeCount || !noteView.contains(sel.anchorNode)) return -1;
+  const r = document.createRange();
+  r.setStart(noteView, 0);
+  r.setEnd(sel.anchorNode, sel.anchorOffset);
+  return r.toString().length;
 }
-function setNoteEditing(on, focus) {
-  noteEditing = on;
-  noteBody.hidden = !on;
-  $('notePreview').hidden = on;
-  $('noteMode').textContent = on ? 'Done' : 'Edit';
-  if (!on) showNotePreview();
-  else if (focus) noteBody.focus();
+function setCaret(node, offset) {
+  const r = document.createRange();
+  r.setStart(node, offset);
+  r.collapse(true);
+  const sel = getSelection();
+  sel.removeAllRanges();
+  sel.addRange(r);
 }
-function toggleTask(lineNo, checked) {
-  const lines = noteBody.value.replace(/\r\n?/g, '\n').split('\n');
-  if (!lines[lineNo]) return;
-  lines[lineNo] = lines[lineNo].replace(/^((?:\s*>)*\s*(?:[-*+]|\d{1,9}[.)])\s+)\[[ xX]\]/, `$1[${checked ? 'x' : ' '}]`);
-  noteBody.value = lines.join('\n');
+function placeCaret(offset) {
+  const walk = document.createTreeWalker(noteView, NodeFilter.SHOW_TEXT);
+  let node, last = null;
+  while ((node = walk.nextNode())) {
+    if (offset <= node.length && !node.parentElement.closest('[contenteditable="false"]')) return setCaret(node, offset);
+    offset -= node.length;
+    last = node;
+  }
+  if (last) setCaret(last, last.length);
+  else setCaret(noteView, 0);
+}
+function renderNoteView(md, keepCaret) {
+  const at = keepCaret ? caretOffset() : -1;
+  const top = noteView.scrollTop;
+  noteView.textContent = '';
+  if (md.trim()) renderMarkdown(noteView, md, noop);
+  noteView.scrollTop = top;
+  if (at >= 0) placeCaret(at);
+}
+function noteMarkdown() {
+  h2mRaw = true;
+  try { return h2mBlocks([...noteView.childNodes]).replace(/\n{3,}/g, '\n\n').trim(); }
+  finally { h2mRaw = false; }
+}
+function syncNote() {
+  const md = noteMarkdown();
+  if (md === noteBody.value) return;
+  noteBody.value = md;
   scheduleSave();
-  showNotePreview();
 }
-$('noteMode').addEventListener('click', () => { flushNote(); setNoteEditing(!noteEditing, true); });
-$('notePreview').addEventListener('click', (e) => {
-  if (e.target.closest('a, input, button, summary') || String(getSelection())) return;
-  setNoteEditing(true, true);
+function focusNote(atEnd) {
+  noteView.focus({ preventScroll: true });
+  if (!atEnd) { placeCaret(0); noteView.scrollTop = 0; return; }
+  placeCaret(Infinity);
+}
+
+const caretElement = () => {
+  const n = getSelection().anchorNode;
+  return n && (n.nodeType === 1 ? n : n.parentElement);
+};
+function blockAround(node) {
+  for (; node && node !== noteView; node = node.parentNode) {
+    if (node.nodeType === 1 && /^(P|DIV|LI|H[1-6]|PRE|TD|TH|SUMMARY)$/.test(node.tagName)) return node;
+  }
+  return noteView;
+}
+// Drops the first n characters of an element's text.
+function dropChars(elm, n) {
+  const walk = document.createTreeWalker(elm, NodeFilter.SHOW_TEXT);
+  let node;
+  while (n > 0 && (node = walk.nextNode())) {
+    const k = Math.min(n, node.length);
+    node.deleteData(0, k);
+    n -= k;
+  }
+}
+function textBeforeCaret(elm) {
+  const sel = getSelection();
+  const r = document.createRange();
+  r.setStart(elm, 0);
+  r.setEnd(sel.anchorNode, sel.anchorOffset);
+  return r.toString().replace(/ /g, ' ');
+}
+// Typing Markdown at the start of a line turns it into that block, as in Nextcloud:
+// "# " a heading, "- " or "* " a list, "1. " a numbered list, "[] " or "- [ ] " a to-do, "> " a quote.
+// inserted is how many characters the latest input added: the space after the marker must be among them.
+function blockShortcut(inserted) {
+  const sel = getSelection();
+  if (!sel.isCollapsed || !sel.rangeCount) return;
+  let block = blockAround(sel.anchorNode);
+  if (/^(PRE|TD|TH|SUMMARY|H[1-6])$/.test(block.tagName) || (block !== noteView && block.closest('pre'))) return;
+  if (block === noteView) { // text typed straight into the note: the line around the caret becomes a paragraph
+    let start = sel.anchorNode;
+    while (start.parentNode !== noteView) start = start.parentNode;
+    if (start.nodeType === 1 && H2M_BLOCK.test(start.tagName)) return;
+    const run = [start];
+    const lineEnd = (n) => n.nodeType === 1 && (H2M_BLOCK.test(n.tagName) || n.tagName === 'BR');
+    for (let n = start.previousSibling; n && !lineEnd(n); n = n.previousSibling) run.unshift(n);
+    for (let n = start.nextSibling; n && !lineEnd(n); n = n.nextSibling) run.push(n);
+    const r = document.createRange();
+    r.setStartBefore(run[0]);
+    r.setEnd(sel.anchorNode, sel.anchorOffset);
+    let k = r.toString().length;
+    if (!/^(#{1,6}|[-*+]|\d{1,9}[.)]|>|(?:[-*+] )?\[[ xX]?\])[  ]/.test(r.toString())) return;
+    const p = el('p');
+    run[0].before(p);
+    for (const n of run) p.append(n);
+    block = p;
+    const walk = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+    for (let t; (t = walk.nextNode());) { if (k <= t.length) { setCaret(t, k); break; } k -= t.length; }
+  }
+  const before = textBeforeCaret(block);
+  const fresh = (m) => m && before.length - inserted < m[0].length; // the marker's space was just typed
+  const caretAfter = (target, k) => { // the caret back where it was, less the marker
+    if (!target.textContent) { target.append(el('br')); return setCaret(target, 0); }
+    const walk = document.createTreeWalker(target, NodeFilter.SHOW_TEXT);
+    let last = null;
+    for (let t; (t = walk.nextNode());) { if (k <= t.length) return setCaret(t, k); k -= t.length; last = t; }
+    setCaret(last, last.length);
+  };
+  let m;
+  if (block.tagName === 'LI') {
+    if (block.classList.contains('task') || !fresh(m = /^\[( |x|X)?\] /.exec(before))) return;
+    dropChars(block, m[0].length);
+    const label = makeTask(block, !!m[1] && m[1] !== ' ');
+    caretAfter(label, before.length - m[0].length);
+    return true;
+  }
+  if (block.closest('li')) return;
+  let make;
+  if (fresh(m = /^(#{1,6}) /.exec(before))) make = 'h';
+  else if (fresh(m = /^(?:[-*+] )?\[( |x|X)?\] /.exec(before))) make = 'task';
+  else if (fresh(m = /^[-*+] /.exec(before))) make = 'ul';
+  else if (fresh(m = /^(\d{1,9})[.)] /.exec(before))) make = 'ol';
+  else if (fresh(m = /^> /.exec(before))) make = 'quote';
+  else return;
+  const keep = before.length - m[0].length;
+  dropChars(block, m[0].length);
+  let target, outer;
+  if (make === 'h') {
+    outer = target = el('h' + Math.min(6, m[1].length + 1));
+    target.dataset.level = m[1].length;
+  } else if (make === 'quote') {
+    outer = el('blockquote');
+    target = el('p');
+    outer.append(target);
+  } else {
+    const tag = make === 'ol' ? 'OL' : 'UL';
+    const li = el('li');
+    const prev = block.previousElementSibling;
+    if (prev && prev.tagName === tag) prev.append(li);
+    else {
+      outer = el(tag.toLowerCase());
+      if (make === 'ol' && +m[1] !== 1) outer.start = +m[1];
+      outer.append(li);
+    }
+    target = li;
+    if (make === 'task') makeTask(li, !!m[1] && m[1] !== ' ');
+  }
+  for (const k of [...block.childNodes]) target.append(k);
+  if (outer) block.replaceWith(outer); else block.remove();
+  caretAfter(target, keep);
+  return true;
+}
+// Backspace at the start of a heading or to-do turns it back into plain text first.
+noteView.addEventListener('beforeinput', (e) => {
+  if (e.inputType !== 'deleteContentBackward') return;
+  const sel = getSelection();
+  if (!sel.isCollapsed || !sel.rangeCount) return;
+  const block = blockAround(sel.anchorNode);
+  if (block.tagName === 'LI' && block.classList.contains('task') && !textBeforeCaret(block)) {
+    e.preventDefault();
+    block.classList.remove('task');
+    delete block.dataset.checked;
+    syncNote();
+  } else if (/^H[1-6]$/.test(block.tagName) && !textBeforeCaret(block)) {
+    e.preventDefault();
+    const p = el('p');
+    p.append(...block.childNodes);
+    if (!p.firstChild) p.append(el('br'));
+    block.replaceWith(p);
+    setCaret(p, 0);
+    syncNote();
+  }
+});
+noteView.addEventListener('input', (e) => {
+  if (/^insert(Text|CompositionText|ReplacementText)$/.test(e.inputType) && e.data && /[  ]/.test(e.data)) blockShortcut(e.data.length);
+  if (e.inputType === 'insertParagraph') { // a new to-do made with Enter starts unticked
+    const li = caretElement()?.closest('li.task');
+    if (li && noteView.contains(li) && !li.textContent.trim()) li.dataset.checked = 'false';
+  }
+  syncNote();
+});
+// Tab and Shift+Tab move a list item in and out.
+noteView.addEventListener('keydown', (e) => {
+  if (e.key !== 'Tab' || e.ctrlKey || e.altKey || e.metaKey) return;
+  if (!caretElement()?.closest('li')) return;
+  e.preventDefault();
+  document.execCommand(e.shiftKey ? 'outdent' : 'indent');
+  syncNote();
+});
+// The box of a to-do sits in the item's left margin: a tap there ticks it.
+const inTaskBox = (e) => {
+  const li = e.target.closest?.('li.task');
+  return li && e.target === li && noteView.contains(li) && e.clientX < li.getBoundingClientRect().left + 26 ? li : null;
+};
+noteView.addEventListener('pointerdown', (e) => {
+  const li = inTaskBox(e);
+  if (!li) return;
+  e.preventDefault(); // keeps the caret and the keyboard where they are
+  li.dataset.checked = li.dataset.checked === 'true' ? 'false' : 'true';
+  syncNote();
+});
+// Once you leave the note, Markdown typed into it (like **bold**) shows formatted.
+noteView.addEventListener('focusout', (e) => {
+  if (e.relatedTarget && noteView.contains(e.relatedTarget)) return;
+  syncNote();
+  renderNoteView(noteBody.value);
+});
+// A tap on a link opens it (its text can still be changed with the arrow keys).
+noteView.addEventListener('click', (e) => {
+  const a = e.target.closest('a[href]');
+  if (!a || !noteView.contains(a) || !getSelection().isCollapsed) return;
+  e.preventDefault();
+  window.open(a.href, '_blank', 'noopener,noreferrer');
+});
+// Pasted formatted text (from Nextcloud, a web page or a document) and pasted Markdown both arrive formatted.
+noteView.addEventListener('paste', (e) => {
+  const cd = e.clipboardData;
+  if (!cd) return;
+  const html = cd.getData('text/html'), plain = cd.getData('text/plain');
+  let md = plain;
+  if (html && !looksLikeMarkdown(plain)) { try { md = htmlToMarkdown(html) || plain; } catch {} }
+  e.preventDefault();
+  if (!md) return;
+  if (!md.includes('\n') && !looksLikeMarkdown(md)) { document.execCommand('insertText', false, md); return; }
+  const box = el('div');
+  renderMarkdown(box, md, noop);
+  if (box.children.length === 1 && box.firstElementChild.tagName === 'P') { // one paragraph: it joins the line
+    document.execCommand('insertHTML', false, box.firstElementChild.innerHTML);
+    return syncNote();
+  }
+  // Several blocks go in whole after the line you're on (or in place of it, if it's empty).
+  const sel = getSelection();
+  if (sel.rangeCount && !sel.isCollapsed && noteView.contains(sel.anchorNode)) sel.getRangeAt(0).deleteContents();
+  let top = sel.rangeCount && noteView.contains(sel.anchorNode) ? sel.anchorNode : null;
+  while (top && top.parentNode !== noteView) top = top.parentNode;
+  const blocks = [...box.childNodes], last = blocks[blocks.length - 1];
+  if (!top || top === noteView) noteView.append(...blocks);
+  else if (!top.textContent.trim()) top.replaceWith(...blocks);
+  else top.after(...blocks);
+  const r = document.createRange();
+  r.selectNodeContents(last);
+  r.collapse(false);
+  sel.removeAllRanges();
+  sel.addRange(r);
+  syncNote();
 });
 function fmtWhen(ts) {
   const d = new Date(ts);
@@ -1041,7 +1289,7 @@ function fillEditor(n) {
   dirty = false;
   $('noteConflict').hidden = true;
   noteState(`Saved ${fmtWhen(n.updated)} · ${n.by}`);
-  if (!noteEditing) showNotePreview();
+  renderNoteView(n.body, document.activeElement === noteView); // a change from another device keeps your place
 }
 function openNote(id) {
   if (id !== openId) flushNote();
@@ -1049,14 +1297,13 @@ function openNote(id) {
   if (!n) { if (notes.length || !me) location.replace('#notes'); return; }
   if (id !== openId) {
     openId = id;
-    noteEditing = !n.body.trim(); // a new or empty note opens ready to write
     fillEditor(n);
-    setNoteEditing(noteEditing);
   }
   $('noteEditor').hidden = false;
   $('notePlaceholder').hidden = true;
   $('notesView').classList.add('editing');
   renderNoteList();
+  if (document.activeElement !== noteView && document.activeElement !== noteTitle) focusNote(); // ready to type straight away
 }
 function closeNote() {
   flushNote();
@@ -1073,22 +1320,7 @@ function scheduleSave() {
   saveTimer = setTimeout(saveNote, 700);
 }
 noteTitle.addEventListener('input', scheduleSave);
-noteBody.addEventListener('input', scheduleSave);
-noteBody.addEventListener('paste', (e) => {
-  const cd = e.clipboardData;
-  const html = cd && cd.getData('text/html'), plain = cd ? cd.getData('text/plain') : '';
-  if (!html || looksLikeMarkdown(plain)) return; // plain text, or Markdown already: paste it as it is
-  let md;
-  try { md = htmlToMarkdown(html); } catch { return; }
-  if (!md || md === plain.trim()) return;
-  e.preventDefault();
-  // insertText keeps the paste undoable; setRangeText is the fallback where it isn't supported.
-  if (!document.execCommand('insertText', false, md)) {
-    noteBody.setRangeText(md, noteBody.selectionStart, noteBody.selectionEnd, 'end');
-    scheduleSave();
-  }
-});
-noteTitle.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); noteBody.focus(); } });
+noteTitle.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); focusNote(); } });
 
 async function saveNote(force) {
   clearTimeout(saveTimer);

@@ -4,8 +4,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-VERSION_CODE=${VERSION_CODE:-14}
-VERSION_NAME=${VERSION_NAME:-1.10.0}
+VERSION_CODE=${VERSION_CODE:-15}
+VERSION_NAME=${VERSION_NAME:-1.11.0}
 FRAMEWORK=/usr/share/android-framework-res/framework-res.apk   # Android 13 resources
 ANDROID_JAR=lib/android-all.jar                                  # Android 14 classes, compile only
 ANDROID_ALL=14-robolectric-10818077
