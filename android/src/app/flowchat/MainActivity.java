@@ -5,6 +5,7 @@ import android.app.DownloadManager;
 import android.app.NotificationManager;
 import android.content.ActivityNotFoundException;
 import android.content.ClipData;
+import android.content.ComponentName;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
@@ -34,6 +35,13 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.net.URLDecoder;
 import java.util.Locale;
 import java.util.regex.Matcher;
@@ -401,6 +409,28 @@ public final class MainActivity extends Activity {
             CodeLock.unlock(MainActivity.this, hash);
         }
 
+        /** Opens the phone's share sheet for a message's text. */
+        @JavascriptInterface
+        public void shareText(final String text) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    share(new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text));
+                }
+            });
+        }
+
+        /** Fetches a shared file from the server, then opens the phone's share sheet for it. */
+        @JavascriptInterface
+        public void shareFile(final String id, final String name, final String type) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    MainActivity.this.shareFile(id, name, type);
+                }
+            });
+        }
+
         @JavascriptInterface
         public void openCodes() {
             runOnUiThread(new Runnable() {
@@ -521,6 +551,90 @@ public final class MainActivity extends Activity {
 
     private int dp(int v) {
         return (int) (v * getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    // ---------- sharing to other apps ----------
+
+    private void share(Intent send) {
+        Intent chooser = Intent.createChooser(send, null);
+        // Leave out "Send to Flowchat": it would only post the same thing again.
+        if (Build.VERSION.SDK_INT >= 24) {
+            chooser.putExtra(Intent.EXTRA_EXCLUDE_COMPONENTS, new ComponentName[] {new ComponentName(this, ShareActivity.class)});
+        }
+        try {
+            startActivity(chooser);
+        } catch (RuntimeException e) {
+            toast("No app on this phone can share this.");
+        }
+    }
+
+    private static void deleteTree(File f) {
+        File[] kids = f.listFiles();
+        if (kids != null) for (File k : kids) deleteTree(k);
+        //noinspection ResultOfMethodCallIgnored
+        f.delete();
+    }
+
+    /** Downloads the file into the app's cache (only the latest one is kept) and shares it from there. */
+    private void shareFile(final String id, String name, final String type) {
+        if (id == null || !id.matches("[a-f0-9]{32}")) return;
+        String clean = name == null ? "" : name.replaceAll("[\\\\/:*?\"<>|\\x00-\\x1f]", "_").trim();
+        final String safe = clean.isEmpty() || clean.startsWith(".") ? "file" + clean : clean;
+        final String url = server + "/api/files/" + id;
+        final String cookie = CookieManager.getInstance().getCookie(url);
+        toast("Getting " + safe + " ready to share…");
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                File folder = SharedFileProvider.dir(MainActivity.this);
+                deleteTree(folder);
+                File out = new File(new File(folder, id), safe);
+                String problem = null;
+                try {
+                    if (!out.getParentFile().mkdirs()) throw new IOException("no room in the app's storage");
+                    HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+                    if (cookie != null) c.setRequestProperty("Cookie", cookie);
+                    c.setRequestProperty("User-Agent", Api.USER_AGENT);
+                    c.setConnectTimeout(15000);
+                    c.setReadTimeout(60000);
+                    try {
+                        int code = c.getResponseCode();
+                        if (code != 200) throw new IOException("the server answered " + code);
+                        InputStream in = c.getInputStream();
+                        OutputStream o = new FileOutputStream(out);
+                        try {
+                            byte[] buf = new byte[65536];
+                            int n;
+                            while ((n = in.read(buf)) > 0) o.write(buf, 0, n);
+                        } finally {
+                            in.close();
+                            o.close();
+                        }
+                    } finally {
+                        c.disconnect();
+                    }
+                } catch (IOException | RuntimeException e) {
+                    problem = String.valueOf(e.getMessage());
+                    deleteTree(folder);
+                }
+                final String failed = problem;
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (failed != null) {
+                            toast("Could not share the file: " + failed);
+                            return;
+                        }
+                        Uri uri = SharedFileProvider.uriFor(id, safe);
+                        String mime = type == null || type.isEmpty() ? getContentResolver().getType(uri) : type;
+                        Intent send = new Intent(Intent.ACTION_SEND).setType(mime).putExtra(Intent.EXTRA_STREAM, uri)
+                                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                        send.setClipData(ClipData.newRawUri(safe, uri));
+                        share(send);
+                    }
+                });
+            }
+        }).start();
     }
 
     private void toast(String text) {

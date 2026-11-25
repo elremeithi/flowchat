@@ -71,6 +71,12 @@
             </intent-filter>
         </activity>
 
+        <provider
+            android:name=".SharedFileProvider"
+            android:authorities="app.flowchat.shared"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
         <service
             android:name=".AlertService"
             android:exported="false" />

@@ -170,6 +170,7 @@ function messageNode(m) {
       bubble.append(el('span', 'file-ext', ext), info);
     }
     node.append(bubble);
+    addShare(meta, m);
     const dl = el('a', null, `Download · ${fmtSize(f.size)}`);
     dl.href = src + '?dl=1';
     meta.append(dl);
@@ -177,6 +178,7 @@ function messageNode(m) {
     const bubble = el('div', 'bubble');
     linkify(bubble, m.text);
     node.append(bubble);
+    addShare(meta, m);
     const copy = el('button', null, 'Copy');
     copy.type = 'button';
     copy.addEventListener('click', async () => {
@@ -192,6 +194,54 @@ function messageNode(m) {
   meta.append(del);
   node.append(meta);
   return node;
+}
+
+// ----- sharing a message or file to another app -----
+// The Android app shares through the phone's share sheet (its WebView has no navigator.share).
+// Browsers need HTTPS for sharing; where it isn't available, the button isn't shown.
+const nativeShare = !!(androidApp && androidApp.shareFile && androidApp.shareText);
+const canShare = nativeShare || !!navigator.share;
+const WEB_SHARE_MAX = 200 * 1024 * 1024; // the browser holds the whole file in memory to share it
+let shareFile = null; // { id, file }: the last file fetched, so a second tap shares at once
+function flashStatus(text) {
+  const s = $('status');
+  const before = [s.textContent, s.className];
+  setStatus(text, 'down');
+  setTimeout(() => { if (s.textContent === text) { s.textContent = before[0]; s.className = before[1]; } }, 4000);
+}
+function addShare(meta, m) {
+  if (!canShare) return;
+  const b = el('button', null, 'Share');
+  b.type = 'button';
+  b.addEventListener('click', () => shareMessage(m, b));
+  meta.append(b);
+}
+async function shareMessage(m, btn) {
+  try {
+    if (!m.file) {
+      if (nativeShare) return androidApp.shareText(m.text);
+      return await navigator.share({ text: m.text });
+    }
+    const f = m.file;
+    if (nativeShare) return androidApp.shareFile(f.id, f.name, f.type || '');
+    if (f.size > WEB_SHARE_MAX) return flashStatus('Too big to share from the browser. Use Download instead.');
+    if (!shareFile || shareFile.id !== f.id) {
+      btn.textContent = 'Preparing…';
+      const r = await fetch(`/api/files/${f.id}`);
+      if (!r.ok) throw new Error('Could not get the file to share');
+      shareFile = { id: f.id, file: new File([await r.blob()], f.name, { type: f.type || 'application/octet-stream' }) };
+    }
+    const data = { files: [shareFile.file], title: f.name };
+    if (navigator.canShare && !navigator.canShare(data)) return flashStatus("This browser can't share this kind of file. Use Download instead.");
+    await navigator.share(data);
+  } catch (e) {
+    if (e.name === 'AbortError') return; // closed the share sheet
+    // A slow download uses up the tap's permission to open the share sheet; the file is ready now.
+    if (e.name === 'NotAllowedError') return flashStatus('The file is ready. Tap Share again.');
+    flashStatus(e.message || 'Could not share');
+  } finally {
+    btn.textContent = 'Share';
+  }
 }
 
 function appendNode(m, isNew) {
